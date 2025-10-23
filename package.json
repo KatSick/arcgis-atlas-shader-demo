@@ -11,7 +11,7 @@
   },
   "dependencies": {
     "@arcgis/core": "^4.34.2",
-    "gl-matrix": "^2.8.1",
+    "gl-matrix": "^3.4.4",
     "react": "^19",
     "react-dom": "^19"
   },
