@@ -1,5 +1,3 @@
-// @ts-nocheck
-
 import { mat3, vec2, vec3 } from "gl-matrix";
 import Map from "@arcgis/core/Map";
 import * as reactiveUtils from "@arcgis/core/core/reactiveUtils";
@@ -8,8 +6,10 @@ import GraphicsLayer from "@arcgis/core/layers/GraphicsLayer";
 import MapView from "@arcgis/core/views/MapView";
 import BaseLayerViewGL2D from "@arcgis/core/views/2d/layers/BaseLayerViewGL2D";
 import * as webMercatorUtils from "@arcgis/core/geometry/support/webMercatorUtils";
+import "@arcgis/core/assets/esri/themes/dark/main.css";
+// @ts-expect-error
 import atlasImgUrl from "./public/app6d.png" with { type: "file" };
-import spriteMetaUrl from "./public/app6d.json" with { type: "file" };
+import { getMetadata, MAP_CONFIG } from "../dataset";
 
 // @ts-expect-error `createSubclass` is not in type definitions while it official documentation
 const CustomLayerView2D = BaseLayerViewGL2D.createSubclass({
@@ -132,7 +132,7 @@ const CustomLayerView2D = BaseLayerViewGL2D.createSubclass({
       this.lastPositionUpdateTime = now;
       needsRender = true;
 
-      this.layer.graphics.forEach((graphic) => {
+      this.layer.graphics.forEach((graphic: { geometry: { clone: () => any } }) => {
         const newPoint = graphic.geometry.clone();
         // Adjust multiplier for more/less movement
         const moveFactor = 5000;
@@ -148,7 +148,7 @@ const CustomLayerView2D = BaseLayerViewGL2D.createSubclass({
       needsRender = true;
 
       const keys = this.layer.sidcKeys; // Use a pre-calculated list from the layer
-      this.layer.graphics.forEach((graphic) => {
+      this.layer.graphics.forEach((graphic: { attributes: any }) => {
         const randomSidc = keys[Math.floor(Math.random() * keys.length)];
         // Cloning attributes is a robust way to ensure change detection
         graphic.attributes = { ...graphic.attributes, sidc: randomSidc };
@@ -160,13 +160,13 @@ const CustomLayerView2D = BaseLayerViewGL2D.createSubclass({
       this.requestRender();
     }
 
-    if (window.location.search.includes("?mode=refresh")) {
+    if (window.location.search.includes("mode=refresh")) {
       // Continue the loop
       this.animationFrame = requestAnimationFrame(this.animate.bind(this));
     }
   },
 
-  render: function (renderParameters) {
+  render: function (renderParameters: { context: any; state: any }) {
     /* ... unchanged ... */
     const gl = renderParameters.context;
     const state = renderParameters.state;
@@ -215,7 +215,7 @@ const CustomLayerView2D = BaseLayerViewGL2D.createSubclass({
     gl.drawElements(gl.TRIANGLES, this.indexBufferSize, gl.UNSIGNED_SHORT, 0);
   },
 
-  updatePositions: function (renderParameters) {
+  updatePositions: function (renderParameters: { context: any; stationary: any; state: any }) {
     /* ... unchanged ... */
     const gl = renderParameters.context;
     const stationary = renderParameters.stationary;
@@ -242,7 +242,7 @@ const CustomLayerView2D = BaseLayerViewGL2D.createSubclass({
     let vIdx = 0;
     let iIdx = 0;
 
-    graphics.forEach((graphic, i) => {
+    graphics.forEach((graphic: { geometry: any; attributes: { sidc: any } }, i: number) => {
       const point = graphic.geometry;
       const sidc = graphic.attributes.sidc;
       const uv = uvAtlasMeta[sidc];
@@ -305,6 +305,7 @@ const CustomLayerView2D = BaseLayerViewGL2D.createSubclass({
   },
 });
 
+// @ts-expect-error arcgis
 const CustomLayer = GraphicsLayer.createSubclass({
   properties: {
     atlasImg: null,
@@ -312,31 +313,34 @@ const CustomLayer = GraphicsLayer.createSubclass({
     spriteMeta: null,
     sidcKeys: null, // Property to hold the list of keys
   },
-  createLayerView: function (view) {
+  createLayerView: function (view: { type: string }) {
     if (view.type === "2d") {
       return new CustomLayerView2D({ view: view, layer: this });
     }
   },
 });
 
-(async function () {
-  function loadImage(url) {
-    return new Promise((resolve, reject) => {
-      const img = new Image();
-      img.crossOrigin = "anonymous";
-      img.onload = () => resolve(img);
-      img.onerror = reject;
-      img.src = url;
-    });
-  }
+function loadImage(url: string) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.crossOrigin = "anonymous";
+    img.onload = () => resolve(img);
+    img.onerror = reject;
+    img.src = url;
+  });
+}
 
+async function init() {
   const atlasImg = await loadImage(atlasImgUrl);
-  const spriteMeta = await fetch(spriteMetaUrl).then((r) => r.json());
+  const { spriteMeta, points } = await getMetadata();
 
+  // @ts-expect-error
   const { width: imgWidth, height: imgHeight } = atlasImg;
   const uvAtlasMeta = {};
+
   for (const sidc in spriteMeta) {
     const { x, y, width, height } = spriteMeta[sidc];
+    // @ts-expect-error
     uvAtlasMeta[sidc] = {
       u0: x / imgWidth,
       v0: y / imgHeight,
@@ -346,22 +350,14 @@ const CustomLayer = GraphicsLayer.createSubclass({
   }
 
   const keys = Object.keys(uvAtlasMeta).filter((x) => x.charAt(4) == "3");
-  const graphics = [];
-  for (let i = 0; i < 50_000; i++) {
-    const sidc = keys[i % keys.length];
-    const geographicPoint = {
-      type: "point",
-      x: -125 + Math.random() * 55,
-      y: 25 + Math.random() * 25,
-    };
-    const mercatorPoint = webMercatorUtils.geographicToWebMercator(geographicPoint);
-    graphics.push(
+  const graphics = points.map(
+    (point, i) =>
       new Graphic({
-        geometry: mercatorPoint,
-        attributes: { sidc: sidc, id: i },
+        // @ts-expect-error
+        geometry: webMercatorUtils.geographicToWebMercator(point),
+        attributes: { sidc: point.sidc, id: i },
       }),
-    );
-  }
+  );
 
   const layer = new CustomLayer({
     graphics: graphics,
@@ -377,21 +373,23 @@ const CustomLayer = GraphicsLayer.createSubclass({
   });
 
   const view = new MapView({
-    container: "viewDiv",
+    container: "root",
     map: map,
-    center: [-98, 39],
-    zoom: 4,
+    center: [MAP_CONFIG.center.longitude, MAP_CONFIG.center.latitude],
+    zoom: MAP_CONFIG.zoom,
   });
 
   // Add custom attribution / copyright text
   const customAttribution = document.createElement("div");
   customAttribution.className = "custom-attribution";
-  customAttribution.innerHTML = 'add ?mode=refresh to URL to enable continuous animation';
-  
+  customAttribution.innerHTML = "add ?mode=refresh to URL to enable continuous animation";
+
   customAttribution.style.fontSize = "14px";
   customAttribution.style.color = "#fff";
   customAttribution.style.opacity = "1";
   customAttribution.style.marginLeft = "2px";
 
   view.ui.add(customAttribution, "top-right");
-})();
+}
+
+init();

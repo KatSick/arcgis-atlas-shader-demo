@@ -1,5 +1,5 @@
 import { serve } from "bun";
-import index from "./index.html";
+import index from "./maplibre-milsymbol.html";
 
 const server = serve({
   routes: {

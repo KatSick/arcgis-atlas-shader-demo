@@ -3,23 +3,39 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="initial-scale=1,maximum-scale=1,user-scalable=no" />
-    <title>ArcGIS Custom WebGL Layer with Continuous Animation</title>
-    <link rel="stylesheet" href="https://js.arcgis.com/4.33/esri/themes/light/main.css" />
-
-    <style>
-      html,
-      body,
-      #viewDiv {
-        padding: 0;
-        margin: 0;
-        height: 100%;
-        width: 100%;
-      }
-    </style>
-
-    <script src="./frontend.ts" type="module"></script>
+    <title>Variants how to Render APP6D Symbology</title>
   </head>
   <body>
-    <div id="viewDiv"></div>
+    <h1>
+      Examples: (add ?count=xxxx to control how many features should be rendered. default=10_000)
+    </h1>
+    <ul>
+      <li>
+        <a href="arcgis-gpu-direct.html"
+          >ArcGIS Custom WebGL Layer & Pre-rendered APP6D (WebGL + Sprite + Atlas)</a
+        >
+      </li>
+      <li>
+        <a href="arcgis-dictionary-local.html"
+          >ArcGIS Official Local Dicitonary renderer (CIMSymbol)</a
+        >
+      </li>
+      <li>
+        <a href="arcgis-dictionary.html"
+          >ArcGIS Official Server-Side Dicitonary renderer (CIMSymbol) (may be rate-limited by
+          ESRI)</a
+        >
+      </li>
+      <li>
+        <a href="ol-milsymbol.html">OpenLayers + Milsymbol (Canvas)</a>
+      </li>
+      <li><a href="maplibre-milsymbol.html">Maplibre + Milsymbol (SVG)</a></li>
+      <li><a href="maplibre-milsymbol-canvas.html">Maplibre + Milsymbol (Canvas)</a></li>
+      <li>
+        <a href="leaflet-milsymbol.html?count=1000"
+          >Leaflet + Milsymbol (SVG) (cant handle 10_000 items. default limited to 1000)</a
+        >
+      </li>
+    </ul>
   </body>
 </html>

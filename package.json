@@ -4,21 +4,33 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "bun --hot src/index.ts",
-    "build": "bun build ./src/index.html --outdir=dist --public-path=/arcgis-atlas-shader-demo/ --sourcemap --target=browser --minify --define:process.env.NODE_ENV='\"production\"' --env='BUN_PUBLIC_*'",
-    "start": "NODE_ENV=production bun src/index.ts",
+    "dev:arcgis-gpu-direct": "bun --hot src/arcgis-gpu-direct/dev.ts",
+    "dev:arcgis-dictionary": "bun --hot src/arcgis-dictionary/dev.ts",
+    "dev:arcgis-dictionary-local": "bun --hot src/arcgis-dictionary-local/dev.ts",
+    "dev:maplibre-milsymbol": "bun --hot src/maplibre-milsymbol/dev.ts",
+    "dev:maplibre-milsymbol-canvas": "bun --hot src/maplibre-milsymbol-canvas/dev.ts",
+    "dev:leaflet-milsymbol": "bun --hot src/leaflet-milsymbol/dev.ts",
+    "dev:ol-milsymbol": "bun --hot src/ol-milsymbol/dev.ts",
+    "build": "bun scripts/build.ts",
+    "start": "bun run build && bun src/dev.ts",
     "fmt": "prettier --write ."
   },
   "dependencies": {
     "@arcgis/core": "^4.34.2",
+    "effect": "^3.19.0",
+    "geojson": "^0.5.0",
     "gl-matrix": "^2.8.1",
-    "react": "^19",
-    "react-dom": "^19"
+    "leaflet": "^1.9.4",
+    "maplibre-gl": "^5.11.0",
+    "milsymbol": "^3.0.3",
+    "ol": "^10.7.0",
+    "qs": "^6.14.0"
   },
   "devDependencies": {
     "@types/bun": "latest",
-    "@types/react": "^19",
-    "@types/react-dom": "^19",
+    "@types/geojson": "^7946.0.16",
+    "@types/leaflet": "^1.9.21",
+    "@types/qs": "^6.14.0",
     "prettier": "^3.6.2"
   }
 }
