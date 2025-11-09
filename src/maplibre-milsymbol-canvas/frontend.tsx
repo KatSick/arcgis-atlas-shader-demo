@@ -19,15 +19,9 @@ map.on("load", () => {
   const ratio = window.devicePixelRatio || 1;
   const size = 20;
 
-  // Collect unique symbol IDs
-  const uniqueSymbolIds = new Set<string>();
-  featureCollection.features.forEach((feature) => {
-    uniqueSymbolIds.add(feature.properties.id);
-  });
-
   // Generate and register canvas images for each unique symbol
-  uniqueSymbolIds.forEach((symbolId) => {
-    const sym = new ms.Symbol(symbolId, {
+  featureCollection.features.forEach((feature) => {
+    const sym = new ms.Symbol(feature.properties.id, {
       size: size * ratio,
     });
 
@@ -39,7 +33,7 @@ map.on("load", () => {
     const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
 
     // Register the canvas image with MapLibre
-    map.addImage(symbolId, imageData, {
+    map.addImage(feature.properties.id, imageData, {
       pixelRatio: ratio,
     });
   });
