@@ -17,7 +17,9 @@ new MapView({
   zoom: MAP_CONFIG.zoom,
 });
 
-const dictionaryRendererConfig = {};
+const dictionaryRendererConfig = {
+  scaleExpression: "0.75",
+};
 
 const dictionaryRendererFieldMap = {
   sidc: "sidc",

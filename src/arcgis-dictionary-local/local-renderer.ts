@@ -1,5 +1,3 @@
-import { subclass } from "@arcgis/core/core/accessorSupport/decorators";
-import DictionaryRenderer from "@arcgis/core/renderers/DictionaryRenderer";
 import esriConfig from "@arcgis/core/config";
 
 export function installArcGisDictionaryInterceptor(
@@ -7,6 +5,7 @@ export function installArcGisDictionaryInterceptor(
   dictionaryCache: Record<string, any>,
 ): void {
   const regexSidc = /styles\/cim\/(.*)\.json/;
+
   esriConfig.request.interceptors?.push({
     urls: new RegExp(url),
     before({ url }: { url: string }) {
@@ -21,24 +20,3 @@ export function installArcGisDictionaryInterceptor(
     },
   });
 }
-
-export const DictionaryRendererLocal: typeof DictionaryRenderer = subclass(
-  "DictionaryRendererLocal",
-)(
-  class extends DictionaryRenderer {
-    override async getSymbolAsync(graphic: __esri.Graphic) {
-      return (await super.getSymbolAsync(graphic))!.clone();
-    }
-
-    override clone() {
-      return new DictionaryRendererLocal({
-        config: this.config,
-        scaleExpression: this.scaleExpression,
-        scaleExpressionTitle: this.scaleExpressionTitle,
-        fieldMap: this.fieldMap,
-        url: this.url,
-        visualVariables: this.visualVariables,
-      });
-    }
-  },
-);

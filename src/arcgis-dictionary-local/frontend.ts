@@ -5,8 +5,9 @@ import FeatureLayer from "@arcgis/core/layers/FeatureLayer";
 import { getMetadata, MAP_CONFIG, type DatasetItem } from "@/dataset";
 import "@arcgis/core/assets/esri/themes/dark/main.css";
 import { generateJsonFile } from "./dictionaryGenerator.ts" with { type: "macro" };
+import DictionaryRenderer from "@arcgis/core/renderers/DictionaryRenderer";
 
-import { DictionaryRendererLocal, installArcGisDictionaryInterceptor } from "./local-renderer.ts";
+import { installArcGisDictionaryInterceptor } from "./local-renderer.ts";
 
 const map = new Map({
   basemap: "osm",
@@ -19,8 +20,6 @@ new MapView({
   zoom: MAP_CONFIG.zoom,
 });
 
-const dictionaryRendererConfig = {};
-
 const dictionaryRendererFieldMap = {
   sidc: "sidc",
 };
@@ -30,10 +29,10 @@ const bundle = await generateJsonFile();
 
 installArcGisDictionaryInterceptor(mockUrl, bundle);
 
-const dictRenderer = new DictionaryRendererLocal({
+const dictRenderer = new DictionaryRenderer({
   url: mockUrl,
   fieldMap: dictionaryRendererFieldMap,
-  config: dictionaryRendererConfig,
+  scaleExpression: "0.75",
 });
 
 var template = {
