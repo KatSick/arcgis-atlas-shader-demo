@@ -97,7 +97,10 @@ async function main() {
 
   // ---- multipoint tactical graphics: mil-sym-ts GeoJSON on native layers ----
   // 10k graphics need the incremental scheduler: viewport cull + screen-size
-  // LOD + zoom-bucketed cache + chunked generation streaming into setData
+  // LOD + zoom-bucketed cache + chunked generation streaming into setData.
+  // Every update carries a *complete* scene (graphics not yet re-rendered are
+  // stood in for by the previous zoom's output), so setData refines what is on
+  // screen instead of emptying the source and filling it back in.
   const scheduler = new TacticalScheduler(scenario.tacticalGraphics);
   let tacticalFull = 0;
   let tacticalSimplified = 0;

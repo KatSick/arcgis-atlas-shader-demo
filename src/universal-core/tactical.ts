@@ -230,8 +230,27 @@ export function renderTacticalGeoJSON(
   return { type: "FeatureCollection", features };
 }
 
+/** The features currently representing one graphic, as a unit. */
+export interface TacticalEntry {
+  /** id of the TacticalGraphic these features belong to */
+  id: string;
+  features: TacticalFeatures;
+}
+
 export interface TacticalUpdate {
+  /**
+   * The complete current composition — every graphic in view is represented,
+   * so an engine can hand this straight to setData without ever showing a gap.
+   */
   collection: FeatureCollection<Geometry, Record<string, unknown>>;
+  /**
+   * Entries added or replaced since the previous update, for engines that
+   * patch a scene graph instead of swapping a whole dataset. Feature arrays
+   * are identity-stable, so an unchanged graphic never appears here.
+   */
+  changed: TacticalEntry[];
+  /** graphic ids that dropped out of view since the previous update */
+  removed: string[];
   /** graphics fully rendered so far in this pass */
   rendered: number;
   /** graphics selected for full rendering in this view */
@@ -241,6 +260,15 @@ export interface TacticalUpdate {
   total: number;
   done: boolean;
 }
+
+type TacticalFeatures = Feature<Geometry, Record<string, unknown>>[];
+
+/**
+ * A graphic already drawn in full detail keeps it until it shrinks well past
+ * `minPixelExtent`, so zoom jitter around the threshold can't flip a graphic
+ * between simplified and full on every pass.
+ */
+const LOD_HYSTERESIS = 0.75;
 
 /**
  * Incremental renderer for LARGE multipoint sets (10k+ graphics).
@@ -255,27 +283,49 @@ export interface TacticalUpdate {
  *    results stream in via repeated onUpdate callbacks,
  *  - a render cache keyed per zoom bucket: outputs are rendered against each
  *    graphic's own bbox (not the viewport), so panning reuses the cache and
- *    only zoom changes re-render.
+ *    only zoom changes re-render,
+ *  - no blink on zoom: a pass never starts from an empty scene. The previous
+ *    zoom bucket's output is retained as a stand-in for every graphic that
+ *    this pass has not re-rendered yet, so each update is a *complete* scene
+ *    that refines in place rather than a partial one that fills back in.
  */
 export class TacticalScheduler {
   private graphics: TacticalGraphic[];
   private bounds: GraphicBounds[];
-  private cache = new Map<string, Feature<Geometry, Record<string, unknown>>[]>();
+  /** full renders for the current zoom bucket */
+  private cache = new Map<string, TacticalFeatures>();
+  /** previous zoom bucket's full renders, used as stand-ins while re-rendering */
+  private stale = new Map<string, TacticalFeatures>();
+  /** view-independent simplified outlines, memoized for identity stability */
+  private outlines = new Map<string, TacticalFeatures>();
+  /** label-stripped views of a feature array, memoized for identity stability */
+  private labelless = new WeakMap<TacticalFeatures, TacticalFeatures>();
+  /** what the consumer currently holds, so updates can be expressed as a delta */
+  private emitted = new Map<string, TacticalFeatures>();
+  /** graphics drawn at full detail last pass — drives the LOD hysteresis */
+  private fullDetail = new Set<string>();
   private cacheBucket = NaN;
   private runId = 0;
   private readonly minPixelExtent: number;
   private readonly labelMinZoom: number;
   private readonly sliceMs: number;
+  private readonly emitIntervalMs: number;
 
   constructor(
     graphics: TacticalGraphic[],
-    opts?: { minPixelExtent?: number; labelMinZoom?: number; sliceMs?: number },
+    opts?: {
+      minPixelExtent?: number;
+      labelMinZoom?: number;
+      sliceMs?: number;
+      emitIntervalMs?: number;
+    },
   ) {
     this.graphics = graphics;
     this.bounds = graphics.map(graphicBounds);
     this.minPixelExtent = opts?.minPixelExtent ?? 24;
     this.labelMinZoom = opts?.labelMinZoom ?? 7;
     this.sliceMs = opts?.sliceMs ?? 12;
+    this.emitIntervalMs = opts?.emitIntervalMs ?? 50;
   }
 
   /** Cancel any in-flight pass (also called implicitly by request()). */
@@ -287,10 +337,12 @@ export class TacticalScheduler {
     const runId = ++this.runId;
 
     // zoom bucket of half-levels: within a bucket, screen-space details are
-    // close enough to reuse; crossing a bucket clears the cache
+    // close enough to reuse. Crossing a bucket demotes the cache to stand-in
+    // duty rather than dropping it, so nothing leaves the screen.
     const bucket = Math.round(view.zoom * 2) / 2;
     if (bucket !== this.cacheBucket) {
-      this.cache.clear();
+      if (this.cache.size > 0) this.stale = this.cache;
+      this.cache = new Map();
       this.cacheBucket = bucket;
     }
 
@@ -301,9 +353,23 @@ export class TacticalScheduler {
     const padY = (north - south) * 0.25;
     const withLabels = view.zoom >= this.labelMinZoom;
 
-    const visible: number[] = [];
-    const features: Feature<Geometry, Record<string, unknown>>[] = [];
+    /** draw order for every graphic in view */
+    const order: string[] = [];
+    /** best-known features per graphic, refined in place as the pass proceeds */
+    const current = new Map<string, TacticalFeatures>();
+    /** indices still awaiting a full render */
+    const pending: number[] = [];
+    /** ids whose entry differs from what the consumer holds */
+    const dirty = new Set<string>();
+    const nextFullDetail = new Set<string>();
     let simplifiedCount = 0;
+
+    const setEntry = (id: string, feats: TacticalFeatures) => {
+      current.set(id, feats);
+      if (this.emitted.get(id) === feats) dirty.delete(id);
+      else dirty.add(id);
+    };
+
     for (let i = 0; i < this.graphics.length; i++) {
       const b = this.bounds[i]!;
       if (
@@ -314,16 +380,113 @@ export class TacticalScheduler {
       ) {
         continue;
       }
+      const graphic = this.graphics[i]!;
+      order.push(graphic.id);
+
       const pxExtent = Math.max((b.maxX - b.minX) / degPerPxX, (b.maxY - b.minY) / degPerPxY);
-      if (pxExtent < this.minPixelExtent) {
+      const threshold = this.fullDetail.has(graphic.id)
+        ? this.minPixelExtent * LOD_HYSTERESIS
+        : this.minPixelExtent;
+      if (pxExtent < threshold) {
         // too small for standard detail — draw a simplified outline instead
         // of hiding it; built from raw control points, so it costs nothing
-        const graphic = this.graphics[i]!;
-        const coordinates =
-          graphic.geometryType === "area"
-            ? [...graphic.points, graphic.points[0]!]
-            : graphic.points;
-        features.push({
+        setEntry(graphic.id, this.outline(graphic));
+        simplifiedCount++;
+        continue;
+      }
+
+      nextFullDetail.add(graphic.id);
+      const ready = this.cache.get(graphic.id);
+      if (ready) {
+        setEntry(graphic.id, this.detail(graphic, ready, withLabels));
+        continue;
+      }
+      // Stand in with the previous zoom's render (same geographic geometry,
+      // only its screen-space detail is stale) so the graphic stays visible
+      // while this pass catches up. Falling back to nothing here is what used
+      // to make the whole layer blink on every zoom.
+      const standIn = this.stale.get(graphic.id);
+      setEntry(
+        graphic.id,
+        standIn ? this.detail(graphic, standIn, withLabels) : this.outline(graphic),
+      );
+      pending.push(i);
+    }
+    this.fullDetail = nextFullDetail;
+
+    const removed: string[] = [];
+    for (const id of this.emitted.keys()) if (!current.has(id)) removed.push(id);
+
+    const fullCount = nextFullDetail.size;
+    let cursor = 0;
+    let pendingRemovals = removed;
+    let lastEmit = 0;
+
+    const emit = (done: boolean) => {
+      const features: TacticalFeatures = [];
+      for (const id of order) {
+        const feats = current.get(id)!;
+        for (const f of feats) features.push(f);
+      }
+      const changed: TacticalEntry[] = [];
+      for (const id of dirty) {
+        const feats = current.get(id)!;
+        changed.push({ id, features: feats });
+        this.emitted.set(id, feats);
+      }
+      dirty.clear();
+      for (const id of pendingRemovals) this.emitted.delete(id);
+
+      onUpdate({
+        collection: { type: "FeatureCollection", features },
+        changed,
+        removed: pendingRemovals,
+        rendered: fullCount - pending.length + cursor,
+        visible: fullCount,
+        simplified: simplifiedCount,
+        total: this.graphics.length,
+        done,
+      });
+      pendingRemovals = [];
+    };
+
+    const step = () => {
+      if (runId !== this.runId) return;
+      const start = performance.now();
+      while (cursor < pending.length && performance.now() - start < this.sliceMs) {
+        const index = pending[cursor++]!;
+        const graphic = this.graphics[index]!;
+        let feats = this.cache.get(graphic.id);
+        if (!feats) {
+          feats = renderOneGraphic(graphic, this.bounds[index]!, degPerPxX, degPerPxY);
+          this.cache.set(graphic.id, feats);
+        }
+        setEntry(graphic.id, this.detail(graphic, feats, withLabels));
+      }
+      const done = cursor >= pending.length;
+      const now = performance.now();
+      // batch chunks into ~emitIntervalMs updates: each update rebuilds the
+      // whole collection, so emitting per 12 ms slice is wasted work
+      if (done || now - lastEmit >= this.emitIntervalMs) {
+        lastEmit = now;
+        emit(done);
+      }
+      if (!done) setTimeout(step, 0);
+    };
+    step();
+  }
+
+  /**
+   * Simplified outline straight from the control points. View-independent, so
+   * it is memoized — a stable array identity keeps it out of the update delta.
+   */
+  private outline(graphic: TacticalGraphic): TacticalFeatures {
+    let feats = this.outlines.get(graphic.id);
+    if (!feats) {
+      const coordinates =
+        graphic.geometryType === "area" ? [...graphic.points, graphic.points[0]!] : graphic.points;
+      feats = [
+        {
           type: "Feature",
           geometry: { type: "LineString", coordinates },
           properties: {
@@ -335,45 +498,39 @@ export class TacticalScheduler {
             fill: null,
             simplified: true,
           },
-        });
-        simplifiedCount++;
-        continue;
-      }
-      visible.push(i);
+        },
+      ];
+      this.outlines.set(graphic.id, feats);
     }
+    return feats;
+  }
 
-    let cursor = 0;
+  /**
+   * Label-gated full render. mil-sym fails on some control-measure/geometry
+   * combinations and yields nothing; falling back to the outline keeps such a
+   * graphic on the map instead of letting it wink out the moment the pass
+   * that renders it completes.
+   */
+  private detail(
+    graphic: TacticalGraphic,
+    feats: TacticalFeatures,
+    withLabels: boolean,
+  ): TacticalFeatures {
+    const gated = this.forLabels(feats, withLabels);
+    return gated.length > 0 ? gated : this.outline(graphic);
+  }
 
-    const step = () => {
-      if (runId !== this.runId) return;
-      const start = performance.now();
-      while (cursor < visible.length && performance.now() - start < this.sliceMs) {
-        const index = visible[cursor++]!;
-        const graphic = this.graphics[index]!;
-        let feats = this.cache.get(graphic.id);
-        if (!feats) {
-          feats = renderOneGraphic(graphic, this.bounds[index]!, degPerPxX, degPerPxY);
-          this.cache.set(graphic.id, feats);
-        }
-        for (const f of feats) {
-          if (!withLabels && (f.properties as { kind?: string }).kind === "label") continue;
-          features.push(f);
-        }
-      }
-      const done = cursor >= visible.length;
-      onUpdate({
-        // copy: MapLibre serializes setData asynchronously, and the next
-        // chunk mutates the accumulator
-        collection: { type: "FeatureCollection", features: features.slice() },
-        rendered: cursor,
-        visible: visible.length,
-        simplified: simplifiedCount,
-        total: this.graphics.length,
-        done,
-      });
-      if (!done) setTimeout(step, 0);
-    };
-    step();
+  /** Label-gated view of a render, memoized so identity stays stable. */
+  private forLabels(feats: TacticalFeatures, withLabels: boolean): TacticalFeatures {
+    if (withLabels) return feats;
+    let stripped = this.labelless.get(feats);
+    if (!stripped) {
+      stripped = feats.filter((f) => (f.properties as { kind?: string }).kind !== "label");
+      // nothing to strip — reuse the original so the entry never looks changed
+      if (stripped.length === feats.length) stripped = feats;
+      this.labelless.set(feats, stripped);
+    }
+    return stripped;
   }
 }
 

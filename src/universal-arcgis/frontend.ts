@@ -1,4 +1,5 @@
-import Map from "@arcgis/core/Map";
+// aliased: the module default would otherwise shadow the global Map used below
+import EsriMap from "@arcgis/core/Map";
 import MapView from "@arcgis/core/views/MapView";
 import Graphic from "@arcgis/core/Graphic";
 import GraphicsLayer from "@arcgis/core/layers/GraphicsLayer";
@@ -187,12 +188,14 @@ async function main() {
   };
 
   // 10k graphics need the incremental scheduler: viewport cull + screen-size
-  // LOD + zoom-bucketed cache + chunked generation. Each update appends only
-  // the new features so the GraphicsLayer isn't rebuilt per chunk.
+  // LOD + zoom-bucketed cache + chunked generation. Updates are applied as a
+  // delta against the graphics already on the layer — clearing the layer up
+  // front and refilling it is what made the whole set blink on every zoom.
   const scheduler = new TacticalScheduler(scenario.tacticalGraphics);
   let tacticalFull = 0;
   let tacticalSimplified = 0;
-  let appliedFeatureCount = 0;
+  /** graphics currently on the layer, keyed by tactical graphic id */
+  const applied = new Map<string, Graphic[]>();
   const refreshTactical = (view: InstanceType<typeof MapView>) => {
     const extent = view.extent;
     if (!extent) return;
@@ -201,8 +204,6 @@ async function main() {
     const toLat = (y: number) =>
       ((2 * Math.atan(Math.exp((y / WORLD) * 2 * Math.PI)) - Math.PI / 2) * 180) / Math.PI;
 
-    appliedFeatureCount = 0;
-    tacticalLayer.removeAll();
     scheduler.request(
       {
         bbox: [toLng(extent.xmin), toLat(extent.ymin), toLng(extent.xmax), toLat(extent.ymax)],
@@ -211,9 +212,25 @@ async function main() {
         zoom: Math.log2(591657527.591555 / view.scale),
       },
       (update) => {
-        const fresh = update.collection.features.slice(appliedFeatureCount);
-        appliedFeatureCount = update.collection.features.length;
-        if (fresh.length > 0) tacticalLayer.addMany(featuresToGraphics(fresh as GeoJSON.Feature[]));
+        // one batched remove + one batched add per update, so the layer is
+        // never momentarily empty and the collection fires minimal events
+        const toRemove: Graphic[] = [];
+        const toAdd: Graphic[] = [];
+        for (const id of update.removed) {
+          const old = applied.get(id);
+          if (!old) continue;
+          for (const g of old) toRemove.push(g);
+          applied.delete(id);
+        }
+        for (const entry of update.changed) {
+          const old = applied.get(entry.id);
+          if (old) for (const g of old) toRemove.push(g);
+          const next = featuresToGraphics(entry.features as GeoJSON.Feature[]);
+          applied.set(entry.id, next);
+          for (const g of next) toAdd.push(g);
+        }
+        if (toRemove.length > 0) tacticalLayer.removeMany(toRemove);
+        if (toAdd.length > 0) tacticalLayer.addMany(toAdd);
         tacticalFull = update.visible;
         tacticalSimplified = update.simplified;
         pushHud();
@@ -233,7 +250,7 @@ async function main() {
   }
 
   const unitsLayer = new UnitsLayer();
-  const map = new Map({
+  const map = new EsriMap({
     basemap: online ? "dark-gray-vector" : undefined,
     layers: [tacticalLayer, unitsLayer],
   });
