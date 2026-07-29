@@ -1,9 +1,9 @@
+// type-only import: pulling tactical.ts values would drag the entire
+// mil-sym-ts bundle (embedded standard data, ~10 MB) into demos that only
+// render point symbols — callers that want multipoint graphics pass the
+// control-measure list in (see listMultipointControlMeasures in tactical.ts)
 import type { PointSymbolStyle } from "./symbol-atlas";
-import {
-  controlMeasureSidc,
-  listMultipointControlMeasures,
-  type TacticalGraphic,
-} from "./tactical";
+import type { ControlMeasureInfo, TacticalGraphic } from "./tactical";
 
 export const SCENARIO_REGION = {
   west: -122,
@@ -73,7 +73,11 @@ export interface Scenario {
   mutateSymbols(): number[];
 }
 
-export function createScenario(count: number, tacticalCount: number): Scenario {
+export function createScenario(
+  count: number,
+  tacticalCount: number,
+  controlMeasures: ControlMeasureInfo[] = [],
+): Scenario {
   const rand = mulberry32(0xa9965d);
   const { west, east, south, north } = SCENARIO_REGION;
 
@@ -127,7 +131,8 @@ export function createScenario(count: number, tacticalCount: number): Scenario {
   }
 
   // multipoint control measures: enumerated from the standard via MSLookup
-  const measures = listMultipointControlMeasures();
+  // by the caller (universal demos); point-only demos pass none
+  const measures = controlMeasures;
   const lines = measures.filter((m) => m.geometry === "line");
   const areas = measures.filter((m) => m.geometry === "area");
   const tacticalGraphics: TacticalGraphic[] = [];
@@ -173,7 +178,8 @@ export function createScenario(count: number, tacticalCount: number): Scenario {
     tacticalGraphics.push({
       id: `tg-${i}`,
       name: measure.name,
-      sidc: controlMeasureSidc(measure.entity),
+      // full 20-digit friendly/present control-measure SIDC
+      sidc: `1003250000${measure.entity}0000`,
       points,
       modifiers: { T: measure.name.slice(0, 12).toUpperCase() },
       geometryType: measure.geometry as "line" | "area",

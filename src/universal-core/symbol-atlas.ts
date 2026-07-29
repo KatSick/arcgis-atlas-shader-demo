@@ -36,13 +36,26 @@ export interface PendingUpload {
 }
 
 /**
+ * Contract between the instanced point renderer and any icon source. The
+ * renderer only needs a texture page size, lazily-allocated uv entries and an
+ * upload queue — which icon generator fills the pixels (milsymbol, the CIM
+ * dictionary rasterizer, ...) is interchangeable.
+ */
+export interface IconAtlas {
+  readonly size: number;
+  readonly pendingUploads: PendingUpload[];
+  readonly entryCount: number;
+  get(style: PointSymbolStyle, withText: boolean): AtlasEntry;
+}
+
+/**
  * Dynamic shelf-packed texture atlas of milsymbol-rendered APP6-D icons,
  * keyed on the full symbol description (SIDC + amplifiers). Entries are
  * rendered lazily on first request and uploaded incrementally by the
  * renderer via the `pendingUploads` queue — the atlas itself has no GL
  * dependency, which is what keeps it engine-agnostic.
  */
-export class SymbolAtlas {
+export class SymbolAtlas implements IconAtlas {
   readonly size: number;
   readonly ratio: number;
   readonly iconSize: number;

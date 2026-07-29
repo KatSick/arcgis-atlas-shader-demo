@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+
+    <title>CIM dictionary rasterizer gallery</title>
+    <style>
+      body {
+        margin: 0;
+        padding: 16px;
+        background: #1c2128;
+        color: #d6deeb;
+        font: 13px/1.4 monospace;
+      }
+      h1 {
+        font-size: 15px;
+      }
+      .grid {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 12px;
+      }
+      .cell {
+        background: #2a313b;
+        border-radius: 6px;
+        padding: 10px;
+        text-align: center;
+      }
+      .cell canvas {
+        display: block;
+        margin: 0 auto 6px;
+      }
+      .cell small {
+        color: #8b98a9;
+        display: block;
+        max-width: 220px;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>CIM dictionary rasterizer — stylx items composed per the dictionary script</h1>
+    <div id="grid" class="grid"></div>
+    <script type="module" src="./frontend.ts"></script>
+  </body>
+</html>

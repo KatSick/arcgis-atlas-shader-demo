@@ -1,4 +1,4 @@
-import type { SymbolAtlas } from "./symbol-atlas";
+import type { IconAtlas } from "./symbol-atlas";
 
 /**
  * Engine-agnostic instanced point-symbol renderer.
@@ -26,7 +26,7 @@ export class PointSymbolRenderer {
   static readonly STYLE_FLOATS = 8;
 
   private gl: WebGLRenderingContext | WebGL2RenderingContext;
-  private atlas: SymbolAtlas;
+  private atlas: IconAtlas;
   private origin: [number, number];
 
   private program: WebGLProgram;
@@ -63,7 +63,7 @@ export class PointSymbolRenderer {
 
   constructor(
     gl: WebGLRenderingContext | WebGL2RenderingContext,
-    atlas: SymbolAtlas,
+    atlas: IconAtlas,
     origin: [number, number],
   ) {
     this.gl = gl;
