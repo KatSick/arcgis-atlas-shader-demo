@@ -1,0 +1,21 @@
+name: "PR Preview Teardown"
+on:
+  pull_request:
+    types: [closed]
+permissions:
+  contents: read
+jobs:
+  teardown:
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    steps:
+      - name: Remove surge.sh preview
+        env:
+          SURGE_TOKEN: ${{ secrets.SURGE_TOKEN }}
+          PREVIEW_DOMAIN: katsick-arcgis-atlas-demo-pr-${{ github.event.number }}.surge.sh
+        run: |
+          if [ -z "$SURGE_TOKEN" ]; then
+            echo "::notice::SURGE_TOKEN secret not set - nothing to tear down"
+            exit 0
+          fi
+          npx surge teardown "$PREVIEW_DOMAIN" --token "$SURGE_TOKEN" || true

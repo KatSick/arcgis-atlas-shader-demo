@@ -4,6 +4,8 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "dev:universal-maplibre": "bun --hot src/universal-maplibre/dev.ts",
+    "dev:universal-arcgis": "bun --hot src/universal-arcgis/dev.ts",
     "dev:arcgis-gpu-direct": "bun --hot src/arcgis-gpu-direct/dev.ts",
     "dev:arcgis-dictionary": "bun --hot src/arcgis-dictionary/dev.ts",
     "dev:arcgis-dictionary-local": "bun --hot src/arcgis-dictionary-local/dev.ts",
@@ -17,6 +19,7 @@
   },
   "dependencies": {
     "@arcgis/core": "^4.34.7",
+    "@armyc2.c5isr.renderer/mil-sym-ts-web": "^2.9.2",
     "effect": "^3.19.3",
     "geojson": "^0.5.0",
     "gl-matrix": "^2.8.1",

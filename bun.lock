@@ -6,6 +6,7 @@
       "name": "bun-react-template",
       "dependencies": {
         "@arcgis/core": "^4.34.7",
+        "@armyc2.c5isr.renderer/mil-sym-ts-web": "^2.9.2",
         "effect": "^3.19.3",
         "geojson": "^0.5.0",
         "gl-matrix": "^2.8.1",
@@ -32,6 +33,8 @@
     "@arcgis/lumina": ["@arcgis/lumina@4.34.2", "", { "dependencies": { "@arcgis/toolkit": "~4.34.2", "csstype": "^3.1.3", "tslib": "^2.8.1" }, "peerDependencies": { "@lit/context": "^1.1.5", "lit": "^3.3.0" }, "optionalPeers": ["@lit/context"] }, "sha512-6tYsPDGU0P0TZPbBbvC9Tr16iP49E27gbCaTzyLIZNJJtItui90fjv9uxqmjqj6N1RA2VFmDnTrW2TlQq4Tj6Q=="],
 
     "@arcgis/toolkit": ["@arcgis/toolkit@4.34.2", "", { "dependencies": { "tslib": "^2.8.1" } }, "sha512-7qgC26aZ+a+ruF91aChaoHkdleAhxDcunUQyVJNMe3rec+/c/HR+94/CjRvs72U7oc6aqYnYtiVrO4ZK4g8ijg=="],
+
+    "@armyc2.c5isr.renderer/mil-sym-ts-web": ["@armyc2.c5isr.renderer/mil-sym-ts-web@2.9.2", "", {}, "sha512-gGMRGhGDfWfd9bJ+3jAa4m/k9l4ACQAHrCDeGpBjOc3pO4KIxtRtNOdgvNhZ4IsE2EfCGv22bFE5KMGw4EqPSQ=="],
 
     "@esri/arcgis-html-sanitizer": ["@esri/arcgis-html-sanitizer@4.1.0", "", { "dependencies": { "xss": "1.0.13" } }, "sha512-einEveDJ/k1180NOp78PB/4Hje9eBy3dyOGLLtLn6bSkizpUfCwuYBIXOA7Y3F/k/BsTQXgKqUVwQ0eiscWMdA=="],
 
