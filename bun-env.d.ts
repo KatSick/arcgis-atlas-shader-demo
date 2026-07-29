@@ -8,6 +8,16 @@ declare module "*.svg" {
   export = path;
 }
 
+declare module "*.stylx" {
+  /**
+   * An Esri style file is a SQLite database; Bun imports it with
+   * `with { type: "sqlite" }` at bundle/macro time
+   */
+  import type { Database } from "bun:sqlite";
+  const db: Database;
+  export = db;
+}
+
 declare module "*.module.css" {
   /**
    * A record of class names to their corresponding CSS module classes

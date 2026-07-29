@@ -1,5 +1,5 @@
 import { PointSymbolRenderer } from "./point-renderer";
-import { SymbolAtlas } from "./symbol-atlas";
+import { SymbolAtlas, type IconAtlas } from "./symbol-atlas";
 import type { Scenario } from "./scenario";
 
 /** zoom level at which text amplifiers get baked into the icons */
@@ -13,7 +13,7 @@ export const TEXT_AMPLIFIER_ZOOM = 8;
  */
 export class UnitLayerController {
   readonly scenario: Scenario;
-  readonly atlas: SymbolAtlas;
+  readonly atlas: IconAtlas;
   renderer: PointSymbolRenderer | null = null;
 
   private styleData: Float32Array;
@@ -22,9 +22,9 @@ export class UnitLayerController {
   private lastMutationTime = 0;
   private readonly mutationIntervalMs: number;
 
-  constructor(scenario: Scenario, opts?: { mutationIntervalMs?: number }) {
+  constructor(scenario: Scenario, opts?: { mutationIntervalMs?: number; atlas?: IconAtlas }) {
     this.scenario = scenario;
-    this.atlas = new SymbolAtlas();
+    this.atlas = opts?.atlas ?? new SymbolAtlas();
     this.styleData = new Float32Array(scenario.count * PointSymbolRenderer.STYLE_FLOATS);
     this.mutationIntervalMs = opts?.mutationIntervalMs ?? 10_000;
   }

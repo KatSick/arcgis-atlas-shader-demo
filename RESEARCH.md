@@ -18,12 +18,12 @@ architecture implemented in the `src/universal-*` demos in this repo.
 
 ### 1.1 Symbol _generation_ libraries (SIDC → drawable)
 
-| Library                                                                                              | Points                          | Amplifiers                               | Multipoint                                                                              | Output       | Notes                                                                                                                                                                                         |
-| ---------------------------------------------------------------------------------------------------- | ------------------------------- | ---------------------------------------- | --------------------------------------------------------------------------------------- | ------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| [milsymbol](https://github.com/spatialillusions/milsymbol)                                           | ✅                              | ✅ (full set of text/graphic amplifiers) | ❌ ([explicitly out of scope](https://github.com/spatialillusions/milsymbol/issues/32)) | SVG / Canvas | Tiny (~100 kB), very fast: ~1000 symbols in <20 ms. Already used by 5 demos in this repo.                                                                                                     |
-| [mil-sym-ts](https://github.com/missioncommand/mil-sym-ts) (`@armyc2.c5isr.renderer/mil-sym-ts-web`) | ✅ (`MilStdIconRenderer` → SVG) | ✅ (per-standard `Modifiers` constants)  | ✅ (`WebRenderer` → **GeoJSON**/GeoSVG/KML)                                             | SVG, GeoJSON | TypeScript port of the US Army Mission Command renderer. Supports 2525D ch1, 2525E ch1, **APP6-D** (version digits `10`), partial APP6-E. Apache-2.0. ~2.5 MB gzipped bundle (data embedded). |
-| [milgraphics](https://github.com/spatialillusions/milgraphics) (spatialillusions)                    | –                               | –                                        | ⚠️ partial/experimental                                                                 | SVG          | Never finished; not a dependable basis.                                                                                                                                                       |
-| ArcGIS `DictionaryRenderer` (joint-military-symbology stylx / CIM)                                   | ✅                              | ✅ (field-mapped)                        | ✅ (control-measure feature classes)                                                    | CIM symbols  | Complete & official, but **ArcGIS-only** — cannot be reused on MapLibre/OpenLayers. CPU-side CIM evaluation is the bottleneck at high counts (see `arcgis-dictionary-local` demo).            |
+| Library                                                                                              | Points                          | Amplifiers                               | Multipoint                                                                              | Output       | Notes                                                                                                                                                                                                                                                             |
+| ---------------------------------------------------------------------------------------------------- | ------------------------------- | ---------------------------------------- | --------------------------------------------------------------------------------------- | ------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| [milsymbol](https://github.com/spatialillusions/milsymbol)                                           | ✅                              | ✅ (full set of text/graphic amplifiers) | ❌ ([explicitly out of scope](https://github.com/spatialillusions/milsymbol/issues/32)) | SVG / Canvas | Tiny (~100 kB), very fast: ~1000 symbols in <20 ms. Already used by 5 demos in this repo.                                                                                                                                                                         |
+| [mil-sym-ts](https://github.com/missioncommand/mil-sym-ts) (`@armyc2.c5isr.renderer/mil-sym-ts-web`) | ✅ (`MilStdIconRenderer` → SVG) | ✅ (per-standard `Modifiers` constants)  | ✅ (`WebRenderer` → **GeoJSON**/GeoSVG/KML)                                             | SVG, GeoJSON | TypeScript port of the US Army Mission Command renderer. Supports 2525D ch1, 2525E ch1, **APP6-D** (version digits `10`), partial APP6-E. Apache-2.0. ~2.5 MB gzipped bundle (data embedded).                                                                     |
+| [milgraphics](https://github.com/spatialillusions/milgraphics) (spatialillusions)                    | –                               | –                                        | ⚠️ partial/experimental                                                                 | SVG          | Never finished; not a dependable basis.                                                                                                                                                                                                                           |
+| ArcGIS `DictionaryRenderer` (joint-military-symbology stylx / CIM)                                   | ✅                              | ✅ (field-mapped)                        | ✅ (control-measure feature classes)                                                    | CIM symbols  | Complete & official. The _runtime_ is ArcGIS-only, but the _content_ (stylx CIM JSON + Arcade script) is open — §5 shows it reimplemented for MapLibre/OpenLayers. CPU-side CIM evaluation is the bottleneck at high counts (see `arcgis-dictionary-local` demo). |
 
 **Key finding:** `mil-sym-ts` is the only maintained open-source JS library that renders
 **multipoint** APP6-D/2525-D tactical graphics. Its `WebRenderer.RenderSymbol2D(...)` takes a
@@ -164,7 +164,80 @@ in ~12 ms slices, and LOD keeps the low-zoom full-render working set to the few 
 operational-level graphics that are legible at that scale — the rest stay visible as
 simplified outlines (HUD shows `full + simplified in view`).
 
-## 5. Sources
+## 5. Another approach: a CIM-based dictionary renderer for MapLibre/OpenLayers
+
+> Question: instead of generating symbology with milsymbol/mil-sym-ts, can we take the ArcGIS
+> DictionaryRenderer content itself — via the open [CIM spec](https://github.com/Esri/cim-spec) —
+> and build the dictionary renderer for MapLibre, OpenLayers, etc.?
+
+**Answer: yes — for point symbols it is decisively practical, and this repo now implements it**
+(`src/cim-dictionary`, `src/cim-maplibre`, `src/cim-ol`, `src/cim-gallery`). The key realization
+is that "DictionaryRenderer" is not magic inside ArcGIS; it is three open, inspectable artifacts:
+
+1. **The stylx file** (`app6d.stylx`, already in this repo) — a SQLite database where each of the
+   4326 items is a **CIM JSON document** keyed by a string (`0_310_0` friendly land frame,
+   `10121102` mech-infantry icon, `ECH_16_P` echelon, `10_labels` text amplifiers, …).
+2. **The dictionary script** — a ~420-line **Arcade** program in the stylx `meta` table. It is
+   pure string logic: attributes (or a packed 20-digit SIDC) → semicolon-delimited item keys +
+   primitive overrides (`po:frame_fill|Color|#80E0FF`, `po:DOM_arrow|Rotation|45`, …).
+3. **The CIM evaluator** — the only ArcGIS-proprietary part, and the only part that must be
+   rebuilt.
+
+### 5.1 What the stylx actually requires (measured, not assumed)
+
+Surveying every item in the APP6-D stylx: point symbols use **only**
+`CIMPointSymbol → CIMVectorMarker → CIMMarkerGraphic` with `CIMSolidFill`/`CIMSolidStroke`
+(plus `CIMGeometricEffectDashes` for "planned" frames) and `CIMTextSymbol` for amplifier text.
+**Zero curved geometries, zero picture/character markers, zero hatch fills** on the point path.
+The complete point-symbol evaluator is therefore a few hundred lines of Canvas 2D:
+frame-rect → size scaling, relative anchors, offsets, rotation (the direction-of-movement arrow
+is a _nested_ CIMPointSymbol inside a marker graphic — the one structural surprise), dashes,
+halo text with `[field]` substitution.
+
+The Arcade script ports mechanically to TypeScript (`dictionary-script.ts`); a test sweeps
+~2000 attribute combinations and asserts every emitted key resolves against the stylx, which
+pins the port to the real content rather than to assumptions.
+
+### 5.2 How it slots into the universal architecture
+
+The CIM pipeline is just **another sprite source for the same atlas + instanced-WebGL core**
+from §3/§4 — the `IconAtlas` contract now has two implementations:
+
+```
+milsymbol path:   PointSymbolStyle ── milsymbol ──▶ canvas ─┐
+                                                            ├─▶ shelf-packed atlas ─▶ instanced WebGL core ─▶ MapLibre / OL / ArcGIS adapter
+CIM path:         attrs ─ dictionary-script ─▶ keys ─ CIM rasterizer ─▶ canvas ─┘
+```
+
+So the 50k-unit performance story is identical (one draw call, incremental `texSubImage2D`
+uploads, ~1300 atlas entries for the demo scenario), while the _symbology_ is now the official
+joint-military-symbology content — pixel-comparable against ArcGIS's own output
+(`bun dev:cim-gallery` vs `bun dev:arcgis-dictionary-local`). The OpenLayers demo doubles as
+the proof of the "~100-line adapter" claim from §1.2: a custom `Layer` owning a WebGL canvas
+and deriving the mercator→clip matrix from OL's view state.
+
+### 5.3 Trade-offs vs the mil-sym-ts approach
+
+|                     | CIM dictionary path (§5)                                                                                                                                                                                                                                                    | milsymbol + mil-sym-ts path (§4)                       |
+| ------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------ |
+| Point symbols       | ✅ official content, exact ArcGIS parity achievable                                                                                                                                                                                                                         | ✅ milsymbol (very close, tiny)                        |
+| Amplifiers          | ✅ data-driven from the stylx (echelon/HQ/TF/FD/OC/DOM/text all covered)                                                                                                                                                                                                    | ✅ milsymbol options                                   |
+| Multipoint graphics | ⚠️ **the hard part**: control-measure CIM is line/area symbology with geometric effects (dashes, offset, arrows, cuts) + on-line marker placements + view-dependent overrides — a substantially bigger evaluator, and the dictionary script alone does not lay out geometry | ✅ mil-sym-ts WebRenderer outputs styled GeoJSON today |
+| Payload             | ⚠️ ~5.4 MB inlined CIM JSON (point subset; ~1 MB gzipped)                                                                                                                                                                                                                   | ~100 kB milsymbol / ~2.5 MB mil-sym-ts                 |
+| Standards updates   | ✅ drop in a new stylx (2525E etc.), re-run the key-resolution test                                                                                                                                                                                                         | wait for library releases                              |
+| License             | Esri stylx content (free, registered under Esri terms); CIM spec is CC-BY                                                                                                                                                                                                   | Apache-2.0 / MIT                                       |
+| Effort              | point path: done here (~1 kLOC). multipoint path: est. multi-week                                                                                                                                                                                                           | integration only                                       |
+
+**Recommendation:** the two approaches compose rather than compete. Use the CIM dictionary
+path for point symbols where ArcGIS-parity symbology from official content matters, and keep
+mil-sym-ts for multipoint tactical graphics (where it is the only maintained open
+implementation of the geometry synthesis). Both feed the same universal rendering core. If
+full CIM control-measure evaluation is ever required (e.g. to drop the mil-sym-ts dependency),
+the line/area effect subset (`CIMGeometricEffectDashes/Offset/Arrow/Cut`,
+`CIMMarkerPlacementOnLine/AtExtremities/PolygonCenter`) is the concrete work list — the stylx
+survey shows nothing else is needed.
+
+## 6. Sources
 
 - [milsymbol](https://github.com/spatialillusions/milsymbol) · [multipoint out-of-scope #32](https://github.com/spatialillusions/milsymbol/issues/32) · [#83](https://github.com/spatialillusions/milsymbol/issues/83)
 - [mil-sym-ts](https://github.com/missioncommand/mil-sym-ts) · [npm @armyc2.c5isr.renderer/mil-sym-ts-web](https://www.npmjs.com/package/@armyc2.c5isr.renderer/mil-sym-ts-web) · [GeoJSON output format](https://github.com/missioncommand/mil-sym-java/wiki/Interpreting-GeoJSON-Output) · [renderer overview](https://github.com/missioncommand/mil-sym-java/wiki/2525D--Renderer-Overview)

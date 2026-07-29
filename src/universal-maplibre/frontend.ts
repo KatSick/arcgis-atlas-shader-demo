@@ -3,7 +3,11 @@ import "maplibre-gl/dist/maplibre-gl.css";
 
 import { createScenario } from "../universal-core/scenario";
 import { UnitLayerController } from "../universal-core/unit-layer";
-import { initTactical, TacticalScheduler } from "../universal-core/tactical";
+import {
+  initTactical,
+  listMultipointControlMeasures,
+  TacticalScheduler,
+} from "../universal-core/tactical";
 import { createHud } from "../universal-core/hud";
 import type { PointSymbolRenderer } from "../universal-core/point-renderer";
 
@@ -49,7 +53,7 @@ async function main() {
   await initTactical();
 
   console.time("scenario generation");
-  const scenario = createScenario(UNIT_COUNT, TACTICAL_COUNT);
+  const scenario = createScenario(UNIT_COUNT, TACTICAL_COUNT, listMultipointControlMeasures());
   console.timeEnd("scenario generation");
 
   const controller = new UnitLayerController(scenario);
