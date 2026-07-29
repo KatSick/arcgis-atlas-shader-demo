@@ -7,7 +7,7 @@ same instanced WebGL core as the MapLibre demo. Multipoint tactical graphics
 (mil-sym-ts GeoJSON) go through a `GraphicsLayer` and are regenerated when the view
 becomes stationary.
 
-URL params: `?count=50000` (units) `&tactical=60` (multipoint graphics)
+URL params: `?count=50000` (units) `&tactical=10000` (multipoint graphics)
 
 ## Run
 

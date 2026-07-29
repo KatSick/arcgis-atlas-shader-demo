@@ -9,12 +9,12 @@ import "@arcgis/core/assets/esri/themes/dark/main.css";
 
 import { createScenario } from "../universal-core/scenario";
 import { UnitLayerController } from "../universal-core/unit-layer";
-import { initTactical, renderTacticalGeoJSON } from "../universal-core/tactical";
+import { initTactical, TacticalScheduler } from "../universal-core/tactical";
 import { createHud } from "../universal-core/hud";
 
 const params = new URLSearchParams(window.location.search);
 const UNIT_COUNT = Number(params.get("count")) || 50_000;
-const TACTICAL_COUNT = Number(params.get("tactical")) || 60;
+const TACTICAL_COUNT = Number(params.get("tactical")) || 10_000;
 
 const hud = createHud("ArcGIS");
 
@@ -113,29 +113,16 @@ async function main() {
   // ---- multipoint tactical graphics: mil-sym-ts GeoJSON → GraphicsLayer ----
   const tacticalLayer = new GraphicsLayer();
 
-  const cssToEsriColor = (css: string | null | undefined): number[] => {
+  const cssToEsriColor = (css: string | null | undefined): number[] | string => {
     if (!css) return [0, 255, 255, 1];
     const match = /^rgba\((\d+),(\d+),(\d+),([\d.]+)\)$/.exec(css);
     if (match) return [Number(match[1]), Number(match[2]), Number(match[3]), Number(match[4])];
-    return [css] as unknown as number[]; // hex string — esri Color parses it
+    return css; // hex string — esri Color autocasts CSS color strings
   };
 
-  const refreshTactical = (view: InstanceType<typeof MapView>) => {
-    const extent = view.extent;
-    if (!extent) return;
-    // extent is in web-mercator meters — convert to degrees for the renderer
-    const toLng = (x: number) => (x / WORLD) * 360;
-    const toLat = (y: number) =>
-      ((2 * Math.atan(Math.exp((y / WORLD) * 2 * Math.PI)) - Math.PI / 2) * 180) / Math.PI;
-
-    const collection = renderTacticalGeoJSON(scenario.tacticalGraphics, {
-      bbox: [toLng(extent.xmin), toLat(extent.ymin), toLng(extent.xmax), toLat(extent.ymax)],
-      widthPx: view.width,
-      heightPx: view.height,
-    });
-
+  const featuresToGraphics = (features: GeoJSON.Feature[]): Graphic[] => {
     const graphics: Graphic[] = [];
-    for (const feature of collection.features) {
+    for (const feature of features) {
       const props = feature.properties as Record<string, any>;
       const geometry = feature.geometry;
       if (geometry.type === "Point" && props.kind === "label") {
@@ -196,8 +183,40 @@ async function main() {
         );
       }
     }
+    return graphics;
+  };
+
+  // 10k graphics need the incremental scheduler: viewport cull + screen-size
+  // LOD + zoom-bucketed cache + chunked generation. Each update appends only
+  // the new features so the GraphicsLayer isn't rebuilt per chunk.
+  const scheduler = new TacticalScheduler(scenario.tacticalGraphics);
+  let tacticalShown = 0;
+  let appliedFeatureCount = 0;
+  const refreshTactical = (view: InstanceType<typeof MapView>) => {
+    const extent = view.extent;
+    if (!extent) return;
+    // extent is in web-mercator meters — convert to degrees for the renderer
+    const toLng = (x: number) => (x / WORLD) * 360;
+    const toLat = (y: number) =>
+      ((2 * Math.atan(Math.exp((y / WORLD) * 2 * Math.PI)) - Math.PI / 2) * 180) / Math.PI;
+
+    appliedFeatureCount = 0;
     tacticalLayer.removeAll();
-    tacticalLayer.addMany(graphics);
+    scheduler.request(
+      {
+        bbox: [toLng(extent.xmin), toLat(extent.ymin), toLng(extent.xmax), toLat(extent.ymax)],
+        widthPx: view.width,
+        heightPx: view.height,
+        zoom: Math.log2(591657527.591555 / view.scale),
+      },
+      (update) => {
+        const fresh = update.collection.features.slice(appliedFeatureCount);
+        appliedFeatureCount = update.collection.features.length;
+        if (fresh.length > 0) tacticalLayer.addMany(featuresToGraphics(fresh as GeoJSON.Feature[]));
+        tacticalShown = update.visible;
+        pushHud();
+      },
+    );
   };
 
   // fall back to a blank web-mercator view when the basemap CDN is unreachable
@@ -239,20 +258,17 @@ async function main() {
     },
   );
 
-  hud.set({
-    units: scenario.count,
-    tactical: scenario.tacticalGraphics.length,
-    atlasEntries: controller.atlas.entryCount,
-  });
-  setInterval(
-    () =>
-      hud.set({
-        units: scenario.count,
-        tactical: scenario.tacticalGraphics.length,
-        atlasEntries: controller.atlas.entryCount,
-      }),
-    2000,
-  );
+  pushHud();
+  setInterval(pushHud, 2000);
+
+  function pushHud() {
+    hud.set({
+      units: scenario.count,
+      tacticalShown,
+      tacticalTotal: scenario.tacticalGraphics.length,
+      atlasEntries: controller.atlas.entryCount,
+    });
+  }
 }
 
 main();
