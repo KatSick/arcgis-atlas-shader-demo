@@ -145,8 +145,9 @@ src/universal-core/
                       restores GL attrib/divisor state so host engines are unaffected
   tactical.ts         mil-sym-ts WebRenderer wrapper: {sidc, points, modifiers} + view →
                       engine-neutral styled GeoJSON; TacticalScheduler scales this to 10k+
-                      graphics: viewport culling, screen-size LOD (skip graphics smaller than
-                      ~24 px), chunked ~12 ms generation slices streaming into the map, and a
+                      graphics: viewport culling, screen-size LOD (graphics smaller than ~24 px
+                      draw as simplified control-point outlines — nothing is hidden, full
+                      rendering swaps in on zoom), chunked ~12 ms generation slices, and a
                       pan-safe cache (each graphic rendered against its own bbox, keyed per
                       half-zoom bucket — pans reuse it, only zoom changes re-render)
   scenario.ts         50k moving units + APP6-D control measures, deterministic PRNG,
@@ -159,8 +160,9 @@ Measured (Chromium, this repo's CI container, 50 000 animated units + 10 000 mul
 graphics): steady 60 fps pan/zoom on both engines; per-frame CPU cost is one `bufferSubData`
 of the moving subset; symbol changes only touch the style buffer; atlas grows incrementally
 without hitches. Multipoint generation never blocks the frame — the scheduler streams results
-in ~12 ms slices, and LOD keeps the low-zoom working set to the few hundred operational-level
-graphics that are actually legible at that scale (HUD shows `shown/total in view`).
+in ~12 ms slices, and LOD keeps the low-zoom full-render working set to the few hundred
+operational-level graphics that are legible at that scale — the rest stay visible as
+simplified outlines (HUD shows `full + simplified in view`).
 
 ## 5. Sources
 

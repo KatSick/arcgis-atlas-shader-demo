@@ -190,7 +190,8 @@ async function main() {
   // LOD + zoom-bucketed cache + chunked generation. Each update appends only
   // the new features so the GraphicsLayer isn't rebuilt per chunk.
   const scheduler = new TacticalScheduler(scenario.tacticalGraphics);
-  let tacticalShown = 0;
+  let tacticalFull = 0;
+  let tacticalSimplified = 0;
   let appliedFeatureCount = 0;
   const refreshTactical = (view: InstanceType<typeof MapView>) => {
     const extent = view.extent;
@@ -213,7 +214,8 @@ async function main() {
         const fresh = update.collection.features.slice(appliedFeatureCount);
         appliedFeatureCount = update.collection.features.length;
         if (fresh.length > 0) tacticalLayer.addMany(featuresToGraphics(fresh as GeoJSON.Feature[]));
-        tacticalShown = update.visible;
+        tacticalFull = update.visible;
+        tacticalSimplified = update.simplified;
         pushHud();
       },
     );
@@ -264,7 +266,8 @@ async function main() {
   function pushHud() {
     hud.set({
       units: scenario.count,
-      tacticalShown,
+      tacticalFull,
+      tacticalSimplified,
       tacticalTotal: scenario.tacticalGraphics.length,
       atlasEntries: controller.atlas.entryCount,
     });

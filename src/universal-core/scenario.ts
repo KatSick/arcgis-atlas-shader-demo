@@ -176,6 +176,7 @@ export function createScenario(count: number, tacticalCount: number): Scenario {
       sidc: controlMeasureSidc(measure.entity),
       points,
       modifiers: { T: measure.name.slice(0, 12).toUpperCase() },
+      geometryType: measure.geometry as "line" | "area",
     });
   }
 

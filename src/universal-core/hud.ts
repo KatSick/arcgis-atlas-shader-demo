@@ -3,7 +3,8 @@ export function createHud(engineName: string): {
   frame(nowMs: number): void;
   set(info: {
     units: number;
-    tacticalShown: number;
+    tacticalFull: number;
+    tacticalSimplified: number;
     tacticalTotal: number;
     atlasEntries: number;
   }): void;
@@ -27,13 +28,20 @@ export function createHud(engineName: string): {
   let frames = 0;
   let windowStart = 0;
   let fps = 0;
-  let info = { units: 0, tacticalShown: 0, tacticalTotal: 0, atlasEntries: 0 };
+  let info = {
+    units: 0,
+    tacticalFull: 0,
+    tacticalSimplified: 0,
+    tacticalTotal: 0,
+    atlasEntries: 0,
+  };
 
   const redraw = () => {
     el.textContent =
       `${engineName} · universal APP6-D layer\n` +
-      `fps ${fps.toFixed(0).padStart(3)} · units ${info.units} · ` +
-      `multipoint ${info.tacticalShown}/${info.tacticalTotal} in view · atlas ${info.atlasEntries}`;
+      `fps ${fps.toFixed(0).padStart(3)} · units ${info.units} · atlas ${info.atlasEntries}\n` +
+      `multipoint ${info.tacticalTotal}: ${info.tacticalFull} full + ` +
+      `${info.tacticalSimplified} simplified in view`;
   };
 
   return {
