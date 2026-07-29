@@ -1,9 +1,15 @@
-# Engine-neutral CIM dictionary renderer core
+# Universal dictionary renderer (engine-neutral CIM core)
 
-An ArcGIS-free reimplementation of the `DictionaryRenderer` for APP6-D point
-symbols, built directly on the open [CIM spec](https://github.com/Esri/cim-spec)
-and the very same `.stylx` content ArcGIS uses
-(`src/arcgis-dictionary-local/app6d.stylx`). Nothing here imports `@arcgis/core`.
+A universal replacement for `@arcgis/core` `DictionaryRenderer` for APP6-D
+point symbols, built directly on the open
+[CIM spec](https://github.com/Esri/cim-spec) and the very same `.stylx`
+content ArcGIS uses (`src/arcgis-dictionary-local/app6d.stylx`). Nothing here
+imports `@arcgis/core` — which is exactly why the same
+`UniversalDictionaryRenderer` instance can _replace_ the DictionaryRenderer
+inside ArcGIS (`cim-arcgis` demo, via `BaseLayerViewGL2D`) **and** run
+unchanged on MapLibre (`cim-maplibre`) and OpenLayers (`cim-ol`), using the
+texture-atlas + instanced-WebGL approach instead of ArcGIS's per-feature CPU
+CIM evaluation.
 
 ## How it works
 
@@ -38,13 +44,18 @@ universal-core PointSymbolRenderer (one instanced draw call on any engine)
   or hatch fills appear on the point path.
 - **`cim-atlas.ts`** — the atlas: keyed on SIDC + amplifiers, rasterizes on
   first request, uploads incrementally via the shared `pendingUploads` queue.
+- **`renderer.ts`** — `UniversalDictionaryRenderer`, the DictionaryRenderer-
+  shaped facade over all of the above: dictionary content + `fieldMap` +
+  symbology configuration in; either per-feature sprites (engine-native image
+  APIs) or the shared atlas (instanced-WebGL path) out.
 
 ## Try it
 
 ```bash
 bun dev:cim-gallery     # rasterizer output, large, no map engine
-bun dev:cim-maplibre    # 50k units through MapLibre CustomLayerInterface
-bun dev:cim-ol          # 50k units through an OpenLayers custom WebGL layer
+bun dev:cim-arcgis      # DictionaryRenderer replaced INSIDE ArcGIS (BaseLayerViewGL2D)
+bun dev:cim-maplibre    # same renderer through MapLibre CustomLayerInterface
+bun dev:cim-ol          # same renderer through an OpenLayers custom WebGL layer
 bun test                # dictionary-script key resolution sweep
 ```
 

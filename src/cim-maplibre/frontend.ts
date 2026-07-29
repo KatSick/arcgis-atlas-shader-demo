@@ -4,8 +4,8 @@ import "maplibre-gl/dist/maplibre-gl.css";
 import { createScenario } from "../universal-core/scenario";
 import { UnitLayerController } from "../universal-core/unit-layer";
 import type { PointSymbolRenderer } from "../universal-core/point-renderer";
-import { CimSymbolAtlas } from "../cim-dictionary/cim-atlas";
 import type { CimDictionaryItems } from "../cim-dictionary/cim-types";
+import { UniversalDictionaryRenderer } from "../cim-dictionary/renderer";
 import { createCimHud } from "../cim-dictionary/hud";
 import { loadDictionaryItemsJson } from "../cim-dictionary/stylx-macro" with { type: "macro" };
 
@@ -53,9 +53,8 @@ async function main() {
   const scenario = createScenario(UNIT_COUNT, 0);
   console.timeEnd("scenario generation");
 
-  const controller = new UnitLayerController(scenario, {
-    atlas: new CimSymbolAtlas(items),
-  });
+  const dictionaryRenderer = new UniversalDictionaryRenderer({ items });
+  const controller = new UnitLayerController(scenario, { atlas: dictionaryRenderer.atlas });
   let renderer: PointSymbolRenderer | null = null;
 
   const unitLayer: maplibregl.CustomLayerInterface = {

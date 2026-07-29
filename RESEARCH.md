@@ -216,6 +216,14 @@ joint-military-symbology content — pixel-comparable against ArcGIS's own outpu
 the proof of the "~100-line adapter" claim from §1.2: a custom `Layer` owning a WebGL canvas
 and deriving the mercator→clip matrix from OL's view state.
 
+`renderer.ts` packages the pipeline behind a DictionaryRenderer-shaped facade
+(`UniversalDictionaryRenderer`: dictionary content + `fieldMap` + symbology configuration →
+sprites or a shared atlas), and the **`cim-arcgis` demo closes the loop: the same renderer
+instance replaces the built-in `DictionaryRenderer` _inside ArcGIS_ via `BaseLayerViewGL2D`** —
+lifting the ~10k practical ceiling of ArcGIS's per-feature CPU CIM evaluation to the 50k+
+instanced path, with identical content and key semantics, while the identical class drives
+MapLibre and OpenLayers. One dictionary renderer, any engine — including ArcGIS itself.
+
 ### 5.3 Trade-offs vs the mil-sym-ts approach
 
 |                     | CIM dictionary path (§5)                                                                                                                                                                                                                                                    | milsymbol + mil-sym-ts path (§4)                       |

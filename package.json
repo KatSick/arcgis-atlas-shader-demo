@@ -6,6 +6,7 @@
   "scripts": {
     "dev:universal-maplibre": "bun --hot src/universal-maplibre/dev.ts",
     "dev:universal-arcgis": "bun --hot src/universal-arcgis/dev.ts",
+    "dev:cim-arcgis": "bun --hot src/cim-arcgis/dev.ts",
     "dev:cim-maplibre": "bun --hot src/cim-maplibre/dev.ts",
     "dev:cim-ol": "bun --hot src/cim-ol/dev.ts",
     "dev:cim-gallery": "bun --hot src/cim-gallery/dev.ts",
