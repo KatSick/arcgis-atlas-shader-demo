@@ -29,6 +29,9 @@ jobs:
         with:
           path: dist/
   deploy:
+    # Pages deploys only from main — the github-pages environment rejects
+    # other branches, which failed this job on every pull request
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
