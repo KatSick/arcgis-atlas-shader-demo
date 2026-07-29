@@ -99,7 +99,8 @@ async function main() {
   // 10k graphics need the incremental scheduler: viewport cull + screen-size
   // LOD + zoom-bucketed cache + chunked generation streaming into setData
   const scheduler = new TacticalScheduler(scenario.tacticalGraphics);
-  let tacticalShown = 0;
+  let tacticalFull = 0;
+  let tacticalSimplified = 0;
   const refreshTactical = () => {
     const bounds = map.getBounds();
     const canvas = map.getCanvas();
@@ -113,7 +114,8 @@ async function main() {
       (update) => {
         const source = map.getSource("tactical") as maplibregl.GeoJSONSource | undefined;
         source?.setData(update.collection);
-        tacticalShown = update.visible;
+        tacticalFull = update.visible;
+        tacticalSimplified = update.simplified;
         pushHud();
       },
     );
@@ -185,7 +187,8 @@ async function main() {
   function pushHud() {
     hud.set({
       units: scenario.count,
-      tacticalShown,
+      tacticalFull,
+      tacticalSimplified,
       tacticalTotal: scenario.tacticalGraphics.length,
       atlasEntries: controller.atlas.entryCount,
     });

@@ -19,6 +19,8 @@ export interface TacticalGraphic {
   /** control points as [lng, lat] */
   points: [number, number][];
   modifiers?: Record<string, string>;
+  /** drives the simplified sub-threshold representation (default: line) */
+  geometryType?: "line" | "area";
 }
 
 /** Current map view — multipoint graphics are view-dependent per the standard. */
@@ -181,15 +183,15 @@ function renderOneGraphic(
         label: String(props.label),
         labelAngle: Number(props.angle ?? props.rotation ?? 0),
         labelSize: parseFontSize(props.fontSize) ?? 10,
-        labelColor: normalizeColor(props.fontColor) ?? "#ffffff",
+        labelColor: friendlyDefault(normalizeColor(props.fontColor)) ?? "#ffffff",
       };
     } else {
-      const stroke = normalizeColor(props.strokeColor ?? props.lineColor);
-      const fill = normalizeColor(props.fillColor);
+      const stroke = friendlyDefault(normalizeColor(props.strokeColor ?? props.lineColor));
+      const fill = friendlyDefault(normalizeColor(props.fillColor));
       feature.properties = {
         graphicId: graphic.id,
         kind: fill && (geomType === "Polygon" || geomType === "MultiPolygon") ? "fill" : "stroke",
-        stroke: stroke ?? "#00ffff",
+        stroke: stroke ?? FRIENDLY_BLUE,
         strokeWidth: Number(props.strokeWidth ?? props.lineWidth ?? 2),
         dash: parseDash(props.strokeDasharray),
         fill: fill ?? null,
@@ -230,10 +232,12 @@ export function renderTacticalGeoJSON(
 
 export interface TacticalUpdate {
   collection: FeatureCollection<Geometry, Record<string, unknown>>;
-  /** graphics rendered so far in this pass (survivors of cull + LOD) */
+  /** graphics fully rendered so far in this pass */
   rendered: number;
-  /** graphics selected for this view after cull + LOD */
+  /** graphics selected for full rendering in this view */
   visible: number;
+  /** graphics drawn as simplified outlines (too small on screen for detail) */
+  simplified: number;
   total: number;
   done: boolean;
 }
@@ -244,7 +248,9 @@ export interface TacticalUpdate {
  * Techniques (all engine-agnostic):
  *  - viewport culling against a padded bbox,
  *  - screen-size LOD: a graphic smaller than `minPixelExtent` on screen is
- *    unreadable and gets skipped — this is what keeps low zooms cheap,
+ *    unreadable in full detail, so it is drawn as a simplified outline built
+ *    straight from its control points (no mil-sym call — effectively free);
+ *    nothing is ever hidden, and full rendering swaps in as you zoom,
  *  - chunked generation in ~12 ms time slices so the map never freezes;
  *    results stream in via repeated onUpdate callbacks,
  *  - a render cache keyed per zoom bucket: outputs are rendered against each
@@ -296,6 +302,8 @@ export class TacticalScheduler {
     const withLabels = view.zoom >= this.labelMinZoom;
 
     const visible: number[] = [];
+    const features: Feature<Geometry, Record<string, unknown>>[] = [];
+    let simplifiedCount = 0;
     for (let i = 0; i < this.graphics.length; i++) {
       const b = this.bounds[i]!;
       if (
@@ -307,11 +315,33 @@ export class TacticalScheduler {
         continue;
       }
       const pxExtent = Math.max((b.maxX - b.minX) / degPerPxX, (b.maxY - b.minY) / degPerPxY);
-      if (pxExtent < this.minPixelExtent) continue;
+      if (pxExtent < this.minPixelExtent) {
+        // too small for standard detail — draw a simplified outline instead
+        // of hiding it; built from raw control points, so it costs nothing
+        const graphic = this.graphics[i]!;
+        const coordinates =
+          graphic.geometryType === "area"
+            ? [...graphic.points, graphic.points[0]!]
+            : graphic.points;
+        features.push({
+          type: "Feature",
+          geometry: { type: "LineString", coordinates },
+          properties: {
+            graphicId: graphic.id,
+            kind: "stroke",
+            stroke: FRIENDLY_BLUE,
+            strokeWidth: 1,
+            dash: null,
+            fill: null,
+            simplified: true,
+          },
+        });
+        simplifiedCount++;
+        continue;
+      }
       visible.push(i);
     }
 
-    const features: Feature<Geometry, Record<string, unknown>>[] = [];
     let cursor = 0;
 
     const step = () => {
@@ -337,6 +367,7 @@ export class TacticalScheduler {
         collection: { type: "FeatureCollection", features: features.slice() },
         rendered: cursor,
         visible: visible.length,
+        simplified: simplifiedCount,
         total: this.graphics.length,
         done,
       });
@@ -344,6 +375,22 @@ export class TacticalScheduler {
     };
     step();
   }
+}
+
+/**
+ * APP6-D "friend" medium blue. mil-sym draws most friendly control measures
+ * in default black; the demos recolor exactly that default to friendly blue,
+ * leaving the standard's meaningful colors (green obstacles, hostile red,
+ * yellow NBC…) untouched.
+ */
+export const FRIENDLY_BLUE = "#00A8DC";
+
+function friendlyDefault(color: string | null): string | null {
+  if (!color) return null;
+  if (color === "#000000") return FRIENDLY_BLUE;
+  const match = /^rgba\(0,0,0,([\d.]+)\)$/.exec(color);
+  if (match) return `rgba(0,168,220,${match[1]})`;
+  return color;
 }
 
 /** mil-sym outputs #RRGGBB or #AARRGGBB — normalize to CSS rgba(). */
