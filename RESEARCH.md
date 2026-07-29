@@ -144,16 +144,23 @@ src/universal-core/
                       separate STREAM position buffer (moving objects) vs DYNAMIC style buffer;
                       restores GL attrib/divisor state so host engines are unaffected
   tactical.ts         mil-sym-ts WebRenderer wrapper: {sidc, points, modifiers} + view →
-                      engine-neutral styled GeoJSON (regenerated on view change)
+                      engine-neutral styled GeoJSON; TacticalScheduler scales this to 10k+
+                      graphics: viewport culling, screen-size LOD (skip graphics smaller than
+                      ~24 px), chunked ~12 ms generation slices streaming into the map, and a
+                      pan-safe cache (each graphic rendered against its own bbox, keyed per
+                      half-zoom bucket — pans reuse it, only zoom changes re-render)
   scenario.ts         50k moving units + APP6-D control measures, deterministic PRNG,
                       per-frame typed-array position updates + periodic attribute changes
 src/universal-maplibre/   CustomLayerInterface adapter + GeoJSON source/layers for tactical graphics
 src/universal-arcgis/     BaseLayerViewGL2D adapter (matrix from view state) + GraphicsLayer for tactical graphics
 ```
 
-Measured (Chromium, this repo's CI container, 50 000 animated units + 60 multipoint graphics):
-steady 60 fps pan/zoom on both engines; per-frame CPU cost is one `bufferSubData` of the moving
-subset; symbol changes only touch the style buffer; atlas grows incrementally without hitches.
+Measured (Chromium, this repo's CI container, 50 000 animated units + 10 000 multipoint
+graphics): steady 60 fps pan/zoom on both engines; per-frame CPU cost is one `bufferSubData`
+of the moving subset; symbol changes only touch the style buffer; atlas grows incrementally
+without hitches. Multipoint generation never blocks the frame — the scheduler streams results
+in ~12 ms slices, and LOD keeps the low-zoom working set to the few hundred operational-level
+graphics that are actually legible at that scale (HUD shows `shown/total in view`).
 
 ## 5. Sources
 

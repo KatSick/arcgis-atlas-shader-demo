@@ -27,18 +27,8 @@ export interface TacticalView {
   bbox: [number, number, number, number];
   widthPx: number;
   heightPx: number;
-}
-
-export interface TacticalStyleProps {
-  kind: "stroke" | "fill" | "label";
-  stroke?: string;
-  strokeWidth?: number;
-  dash?: number[];
-  fill?: string;
-  label?: string;
-  labelAngle?: number;
-  labelSize?: number;
-  labelColor?: string;
+  /** web-mercator zoom level (fractional ok) — drives LOD and the render cache */
+  zoom: number;
 }
 
 let readyPromise: Promise<void> | null = null;
@@ -103,100 +93,257 @@ export function controlMeasureSidc(entity: string): string {
   return `1003250000${entity}0000`;
 }
 
+interface GraphicBounds {
+  minX: number;
+  minY: number;
+  maxX: number;
+  maxY: number;
+}
+
+function graphicBounds(graphic: TacticalGraphic): GraphicBounds {
+  let minX = Infinity,
+    minY = Infinity,
+    maxX = -Infinity,
+    maxY = -Infinity;
+  for (const [x, y] of graphic.points) {
+    minX = Math.min(minX, x);
+    maxX = Math.max(maxX, x);
+    minY = Math.min(minY, y);
+    maxY = Math.max(maxY, y);
+  }
+  return { minX, minY, maxX, maxY };
+}
+
 /**
- * Render tactical graphics for the given view into one engine-neutral
- * GeoJSON FeatureCollection. Feature properties are normalized under `_style`
- * plus flattened keys adapters can consume with data-driven styling.
+ * Render one graphic against its OWN padded bbox (not the viewport), with a
+ * pixel size derived from the current map resolution. The output therefore
+ * depends only on (graphic, resolution) — pans never invalidate it, which is
+ * what makes the scheduler's cache work at 10k+ graphics.
+ */
+function renderOneGraphic(
+  graphic: TacticalGraphic,
+  bounds: GraphicBounds,
+  degPerPxX: number,
+  degPerPxY: number,
+): Feature<Geometry, Record<string, unknown>>[] {
+  const padX = Math.max((bounds.maxX - bounds.minX) * 0.5, degPerPxX * 64);
+  const padY = Math.max((bounds.maxY - bounds.minY) * 0.5, degPerPxY * 64);
+  const west = bounds.minX - padX;
+  const east = bounds.maxX + padX;
+  const south = bounds.minY - padY;
+  const north = bounds.maxY + padY;
+  const widthPx = Math.max(32, Math.ceil((east - west) / degPerPxX));
+  const heightPx = Math.max(32, Math.ceil((north - south) / degPerPxY));
+
+  const controlPoints = graphic.points.map(([lng, lat]) => `${lng},${lat}`).join(" ");
+  const modifiers = new Map<string, string>(Object.entries(graphic.modifiers ?? {}));
+  const attributes = new Map<string, string>();
+
+  let raw: string;
+  try {
+    raw = WebRenderer.RenderSymbol2D(
+      graphic.id,
+      graphic.name,
+      "",
+      graphic.sidc,
+      controlPoints,
+      widthPx,
+      heightPx,
+      `${west},${south},${east},${north}`,
+      modifiers,
+      attributes,
+      WebRenderer.OUTPUT_FORMAT_GEOJSON,
+    );
+  } catch (error) {
+    console.warn(`tactical render failed for ${graphic.sidc} (${graphic.name})`, error);
+    return [];
+  }
+
+  let collection: FeatureCollection<Geometry, Record<string, any>>;
+  try {
+    collection = JSON.parse(raw);
+  } catch {
+    return [];
+  }
+  if (!collection?.features) return [];
+
+  const features: Feature<Geometry, Record<string, unknown>>[] = [];
+  for (const feature of collection.features) {
+    const props = feature.properties ?? {};
+    const geomType = feature.geometry?.type;
+    if (!geomType) continue;
+
+    if (geomType === "Point") {
+      if (!props.label) continue;
+      feature.properties = {
+        graphicId: graphic.id,
+        kind: "label",
+        label: String(props.label),
+        labelAngle: Number(props.angle ?? props.rotation ?? 0),
+        labelSize: parseFontSize(props.fontSize) ?? 10,
+        labelColor: normalizeColor(props.fontColor) ?? "#ffffff",
+      };
+    } else {
+      const stroke = normalizeColor(props.strokeColor ?? props.lineColor);
+      const fill = normalizeColor(props.fillColor);
+      feature.properties = {
+        graphicId: graphic.id,
+        kind: fill && (geomType === "Polygon" || geomType === "MultiPolygon") ? "fill" : "stroke",
+        stroke: stroke ?? "#00ffff",
+        strokeWidth: Number(props.strokeWidth ?? props.lineWidth ?? 2),
+        dash: parseDash(props.strokeDasharray),
+        fill: fill ?? null,
+      };
+    }
+    features.push(feature as Feature<Geometry, Record<string, unknown>>);
+  }
+  return features;
+}
+
+/**
+ * Legacy one-shot render of a graphic list for a view. Fine for hundreds of
+ * graphics; use TacticalScheduler for thousands.
  */
 export function renderTacticalGeoJSON(
   graphics: TacticalGraphic[],
-  view: TacticalView,
+  view: Omit<TacticalView, "zoom">,
 ): FeatureCollection<Geometry, Record<string, unknown>> {
   const [west, south, east, north] = view.bbox;
-  const bbox = `${west},${south},${east},${north}`;
+  const degPerPxX = (east - west) / view.widthPx;
+  const degPerPxY = (north - south) / view.heightPx;
   const features: Feature<Geometry, Record<string, unknown>>[] = [];
-
   for (const graphic of graphics) {
-    // cheap pre-cull on control-point bbox (padded ~2°) before invoking the renderer
-    let minX = Infinity,
-      minY = Infinity,
-      maxX = -Infinity,
-      maxY = -Infinity;
-    for (const [x, y] of graphic.points) {
-      minX = Math.min(minX, x);
-      maxX = Math.max(maxX, x);
-      minY = Math.min(minY, y);
-      maxY = Math.max(maxY, y);
-    }
+    const bounds = graphicBounds(graphic);
     const pad = 2;
-    if (maxX < west - pad || minX > east + pad || maxY < south - pad || minY > north + pad) {
+    if (
+      bounds.maxX < west - pad ||
+      bounds.minX > east + pad ||
+      bounds.maxY < south - pad ||
+      bounds.minY > north + pad
+    ) {
       continue;
     }
+    features.push(...renderOneGraphic(graphic, bounds, degPerPxX, degPerPxY));
+  }
+  return { type: "FeatureCollection", features };
+}
 
-    const controlPoints = graphic.points.map(([lng, lat]) => `${lng},${lat}`).join(" ");
-    const modifiers = new Map<string, string>(Object.entries(graphic.modifiers ?? {}));
-    const attributes = new Map<string, string>();
+export interface TacticalUpdate {
+  collection: FeatureCollection<Geometry, Record<string, unknown>>;
+  /** graphics rendered so far in this pass (survivors of cull + LOD) */
+  rendered: number;
+  /** graphics selected for this view after cull + LOD */
+  visible: number;
+  total: number;
+  done: boolean;
+}
 
-    let raw: string;
-    try {
-      raw = WebRenderer.RenderSymbol2D(
-        graphic.id,
-        graphic.name,
-        "",
-        graphic.sidc,
-        controlPoints,
-        view.widthPx,
-        view.heightPx,
-        bbox,
-        modifiers,
-        attributes,
-        WebRenderer.OUTPUT_FORMAT_GEOJSON,
-      );
-    } catch (error) {
-      console.warn(`tactical render failed for ${graphic.sidc} (${graphic.name})`, error);
-      continue;
-    }
+/**
+ * Incremental renderer for LARGE multipoint sets (10k+ graphics).
+ *
+ * Techniques (all engine-agnostic):
+ *  - viewport culling against a padded bbox,
+ *  - screen-size LOD: a graphic smaller than `minPixelExtent` on screen is
+ *    unreadable and gets skipped — this is what keeps low zooms cheap,
+ *  - chunked generation in ~12 ms time slices so the map never freezes;
+ *    results stream in via repeated onUpdate callbacks,
+ *  - a render cache keyed per zoom bucket: outputs are rendered against each
+ *    graphic's own bbox (not the viewport), so panning reuses the cache and
+ *    only zoom changes re-render.
+ */
+export class TacticalScheduler {
+  private graphics: TacticalGraphic[];
+  private bounds: GraphicBounds[];
+  private cache = new Map<string, Feature<Geometry, Record<string, unknown>>[]>();
+  private cacheBucket = NaN;
+  private runId = 0;
+  private readonly minPixelExtent: number;
+  private readonly labelMinZoom: number;
+  private readonly sliceMs: number;
 
-    let collection: FeatureCollection<Geometry, Record<string, any>>;
-    try {
-      collection = JSON.parse(raw);
-    } catch {
-      continue;
-    }
-    if (!collection?.features) continue;
-
-    for (const feature of collection.features) {
-      const props = feature.properties ?? {};
-      const geomType = feature.geometry?.type;
-      if (!geomType) continue;
-
-      if (geomType === "Point") {
-        if (!props.label) continue;
-        feature.properties = {
-          graphicId: graphic.id,
-          kind: "label",
-          label: String(props.label),
-          labelAngle: Number(props.angle ?? props.rotation ?? 0),
-          labelSize: parseFontSize(props.fontSize) ?? 10,
-          labelColor: normalizeColor(props.fontColor) ?? "#ffffff",
-        };
-      } else {
-        const stroke = normalizeColor(props.strokeColor ?? props.lineColor);
-        const fill = normalizeColor(props.fillColor);
-        feature.properties = {
-          graphicId: graphic.id,
-          kind: fill && (geomType === "Polygon" || geomType === "MultiPolygon") ? "fill" : "stroke",
-          stroke: stroke ?? "#00ffff",
-          strokeWidth: Number(props.strokeWidth ?? props.lineWidth ?? 2),
-          dash: parseDash(props.strokeDasharray),
-          fill: fill ?? null,
-        };
-      }
-      features.push(feature as Feature<Geometry, Record<string, unknown>>);
-    }
+  constructor(
+    graphics: TacticalGraphic[],
+    opts?: { minPixelExtent?: number; labelMinZoom?: number; sliceMs?: number },
+  ) {
+    this.graphics = graphics;
+    this.bounds = graphics.map(graphicBounds);
+    this.minPixelExtent = opts?.minPixelExtent ?? 24;
+    this.labelMinZoom = opts?.labelMinZoom ?? 7;
+    this.sliceMs = opts?.sliceMs ?? 12;
   }
 
-  return { type: "FeatureCollection", features };
+  /** Cancel any in-flight pass (also called implicitly by request()). */
+  cancel(): void {
+    this.runId++;
+  }
+
+  request(view: TacticalView, onUpdate: (update: TacticalUpdate) => void): void {
+    const runId = ++this.runId;
+
+    // zoom bucket of half-levels: within a bucket, screen-space details are
+    // close enough to reuse; crossing a bucket clears the cache
+    const bucket = Math.round(view.zoom * 2) / 2;
+    if (bucket !== this.cacheBucket) {
+      this.cache.clear();
+      this.cacheBucket = bucket;
+    }
+
+    const [west, south, east, north] = view.bbox;
+    const degPerPxX = (east - west) / view.widthPx;
+    const degPerPxY = (north - south) / view.heightPx;
+    const padX = (east - west) * 0.25;
+    const padY = (north - south) * 0.25;
+    const withLabels = view.zoom >= this.labelMinZoom;
+
+    const visible: number[] = [];
+    for (let i = 0; i < this.graphics.length; i++) {
+      const b = this.bounds[i]!;
+      if (
+        b.maxX < west - padX ||
+        b.minX > east + padX ||
+        b.maxY < south - padY ||
+        b.minY > north + padY
+      ) {
+        continue;
+      }
+      const pxExtent = Math.max((b.maxX - b.minX) / degPerPxX, (b.maxY - b.minY) / degPerPxY);
+      if (pxExtent < this.minPixelExtent) continue;
+      visible.push(i);
+    }
+
+    const features: Feature<Geometry, Record<string, unknown>>[] = [];
+    let cursor = 0;
+
+    const step = () => {
+      if (runId !== this.runId) return;
+      const start = performance.now();
+      while (cursor < visible.length && performance.now() - start < this.sliceMs) {
+        const index = visible[cursor++]!;
+        const graphic = this.graphics[index]!;
+        let feats = this.cache.get(graphic.id);
+        if (!feats) {
+          feats = renderOneGraphic(graphic, this.bounds[index]!, degPerPxX, degPerPxY);
+          this.cache.set(graphic.id, feats);
+        }
+        for (const f of feats) {
+          if (!withLabels && (f.properties as { kind?: string }).kind === "label") continue;
+          features.push(f);
+        }
+      }
+      const done = cursor >= visible.length;
+      onUpdate({
+        // copy: MapLibre serializes setData asynchronously, and the next
+        // chunk mutates the accumulator
+        collection: { type: "FeatureCollection", features: features.slice() },
+        rendered: cursor,
+        visible: visible.length,
+        total: this.graphics.length,
+        done,
+      });
+      if (!done) setTimeout(step, 0);
+    };
+    step();
+  }
 }
 
 /** mil-sym outputs #RRGGBB or #AARRGGBB — normalize to CSS rgba(). */

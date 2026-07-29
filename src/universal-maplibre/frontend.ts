@@ -3,13 +3,13 @@ import "maplibre-gl/dist/maplibre-gl.css";
 
 import { createScenario } from "../universal-core/scenario";
 import { UnitLayerController } from "../universal-core/unit-layer";
-import { initTactical, renderTacticalGeoJSON } from "../universal-core/tactical";
+import { initTactical, TacticalScheduler } from "../universal-core/tactical";
 import { createHud } from "../universal-core/hud";
 import type { PointSymbolRenderer } from "../universal-core/point-renderer";
 
 const params = new URLSearchParams(window.location.search);
 const UNIT_COUNT = Number(params.get("count")) || 50_000;
-const TACTICAL_COUNT = Number(params.get("tactical")) || 60;
+const TACTICAL_COUNT = Number(params.get("tactical")) || 10_000;
 
 const hud = createHud("MapLibre");
 
@@ -96,16 +96,27 @@ async function main() {
   };
 
   // ---- multipoint tactical graphics: mil-sym-ts GeoJSON on native layers ----
+  // 10k graphics need the incremental scheduler: viewport cull + screen-size
+  // LOD + zoom-bucketed cache + chunked generation streaming into setData
+  const scheduler = new TacticalScheduler(scenario.tacticalGraphics);
+  let tacticalShown = 0;
   const refreshTactical = () => {
     const bounds = map.getBounds();
     const canvas = map.getCanvas();
-    const collection = renderTacticalGeoJSON(scenario.tacticalGraphics, {
-      bbox: [bounds.getWest(), bounds.getSouth(), bounds.getEast(), bounds.getNorth()],
-      widthPx: canvas.clientWidth,
-      heightPx: canvas.clientHeight,
-    });
-    const source = map.getSource("tactical") as maplibregl.GeoJSONSource | undefined;
-    source?.setData(collection);
+    scheduler.request(
+      {
+        bbox: [bounds.getWest(), bounds.getSouth(), bounds.getEast(), bounds.getNorth()],
+        widthPx: canvas.clientWidth,
+        heightPx: canvas.clientHeight,
+        zoom: map.getZoom(),
+      },
+      (update) => {
+        const source = map.getSource("tactical") as maplibregl.GeoJSONSource | undefined;
+        source?.setData(update.collection);
+        tacticalShown = update.visible;
+        pushHud();
+      },
+    );
   };
 
   map.on("load", () => {
@@ -167,21 +178,18 @@ async function main() {
     map.addLayer(unitLayer);
 
     refreshTactical();
+    pushHud();
+    setInterval(pushHud, 2000);
+  });
+
+  function pushHud() {
     hud.set({
       units: scenario.count,
-      tactical: scenario.tacticalGraphics.length,
+      tacticalShown,
+      tacticalTotal: scenario.tacticalGraphics.length,
       atlasEntries: controller.atlas.entryCount,
     });
-    setInterval(
-      () =>
-        hud.set({
-          units: scenario.count,
-          tactical: scenario.tacticalGraphics.length,
-          atlasEntries: controller.atlas.entryCount,
-        }),
-      2000,
-    );
-  });
+  }
 
   // multipoint graphics are view-dependent (arrowheads, ticks, labels are
   // screen-space): regenerate when the camera settles

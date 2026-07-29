@@ -135,7 +135,12 @@ export function createScenario(count: number, tacticalCount: number): Scenario {
     const pool = i % 2 === 0 ? areas : lines;
     if (pool.length === 0) continue;
     const measure = pool[Math.floor(rand() * pool.length)]!;
-    const cluster = clusters[Math.floor(rand() * clusterCount)]!;
+    // spread independently of unit clusters; ~5% are operational-level (large,
+    // visible at low zoom), the rest tactical-level (small — the screen-size
+    // LOD reveals them as you zoom in), so a 10k+ set stays legible
+    const sizeScale = rand() < 0.05 ? 5 + rand() * 5 : 1;
+    const cx = west + rand() * (east - west);
+    const cy = south + rand() * (north - south);
 
     const pointCount = Math.max(
       measure.minPoints,
@@ -143,24 +148,25 @@ export function createScenario(count: number, tacticalCount: number): Scenario {
     );
     const points: [number, number][] = [];
     if (measure.geometry === "area") {
-      // ring of points around the cluster center
-      const radius = 0.4 + rand() * 0.6;
+      // ring of points around the center
+      const radius = (0.08 + rand() * 0.18) * sizeScale;
       const phase = rand() * Math.PI * 2;
       for (let p = 0; p < pointCount; p++) {
         const angle = phase + (p / pointCount) * Math.PI * 2;
         points.push([
-          cluster.x + Math.cos(angle) * radius * (0.7 + rand() * 0.6),
-          cluster.y + Math.sin(angle) * radius * 0.7 * (0.7 + rand() * 0.6),
+          cx + Math.cos(angle) * radius * (0.7 + rand() * 0.6),
+          cy + Math.sin(angle) * radius * 0.7 * (0.7 + rand() * 0.6),
         ]);
       }
     } else {
-      // meandering polyline near the cluster
-      let x = cluster.x - 0.8;
-      let y = cluster.y + (rand() - 0.5) * 0.8;
+      // meandering polyline through the center
+      const span = (0.3 + rand() * 0.5) * sizeScale;
+      let x = cx - span / 2;
+      let y = cy + (rand() - 0.5) * 0.3;
       for (let p = 0; p < pointCount; p++) {
         points.push([x, y]);
-        x += (1.6 / Math.max(1, pointCount - 1)) * (0.7 + rand() * 0.6);
-        y += (rand() - 0.5) * 0.5;
+        x += (span / Math.max(1, pointCount - 1)) * (0.7 + rand() * 0.6);
+        y += (rand() - 0.5) * 0.2;
       }
     }
 

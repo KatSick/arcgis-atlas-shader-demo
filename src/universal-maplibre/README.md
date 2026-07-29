@@ -5,7 +5,7 @@ renderer: 50k+ point symbols with baked amplifiers in one instanced draw call, p
 multipoint tactical graphics (mil-sym-ts GeoJSON) on native `fill`/`line`/`symbol` layers,
 regenerated on `moveend` (multipoint graphics are view-dependent per the standard).
 
-URL params: `?count=50000` (units) `&tactical=60` (multipoint graphics)
+URL params: `?count=50000` (units) `&tactical=10000` (multipoint graphics)
 
 ## Run
 
