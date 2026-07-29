@@ -1,11 +1,19 @@
 import Map from "@arcgis/core/Map";
 import MapView from "@arcgis/core/views/MapView";
+import Graphic from "@arcgis/core/Graphic";
+import GraphicsLayer from "@arcgis/core/layers/GraphicsLayer";
 import Layer from "@arcgis/core/layers/Layer";
 import BaseLayerViewGL2D from "@arcgis/core/views/2d/layers/BaseLayerViewGL2D";
+import * as reactiveUtils from "@arcgis/core/core/reactiveUtils";
 import "@arcgis/core/assets/esri/themes/dark/main.css";
 
 import { createScenario } from "../universal-core/scenario";
 import { UnitLayerController } from "../universal-core/unit-layer";
+import {
+  initTactical,
+  listMultipointControlMeasures,
+  TacticalScheduler,
+} from "../universal-core/tactical";
 import type { CimDictionaryItems } from "../cim-dictionary/cim-types";
 import { UniversalDictionaryRenderer } from "../cim-dictionary/renderer";
 import { createCimHud } from "../cim-dictionary/hud";
@@ -19,11 +27,13 @@ import { loadDictionaryItemsJson } from "../cim-dictionary/stylx-macro" with { t
  * rasterized once per unique SIDC+amplifier combo into a shared texture
  * atlas and drawn as instanced quads through BaseLayerViewGL2D. The very
  * same UniversalDictionaryRenderer instance drives the MapLibre and
- * OpenLayers demos — one renderer, any engine.
+ * OpenLayers demos — one renderer, any engine. Multipoint tactical graphics
+ * ride the mil-sym-ts pipeline onto a GraphicsLayer, as in universal-arcgis.
  */
 
 const params = new URLSearchParams(window.location.search);
 const UNIT_COUNT = Number(params.get("count")) || 50_000;
+const TACTICAL_COUNT = Number(params.get("tactical")) || 10_000;
 
 const hud = createCimHud("ArcGIS");
 
@@ -75,8 +85,10 @@ function arcgisMatrix(
 async function main() {
   const items = JSON.parse(await loadDictionaryItemsJson()) as CimDictionaryItems;
 
+  await initTactical();
+
   console.time("scenario generation");
-  const scenario = createScenario(UNIT_COUNT, 0);
+  const scenario = createScenario(UNIT_COUNT, TACTICAL_COUNT, listMultipointControlMeasures());
   console.timeEnd("scenario generation");
 
   const dictionaryRenderer = new UniversalDictionaryRenderer({ items });
@@ -120,6 +132,111 @@ async function main() {
     },
   });
 
+  // ---- multipoint tactical graphics: mil-sym-ts GeoJSON → GraphicsLayer ----
+  const tacticalLayer = new GraphicsLayer();
+
+  const cssToEsriColor = (css: string | null | undefined): number[] | string => {
+    if (!css) return [0, 255, 255, 1];
+    const match = /^rgba\((\d+),(\d+),(\d+),([\d.]+)\)$/.exec(css);
+    if (match) return [Number(match[1]), Number(match[2]), Number(match[3]), Number(match[4])];
+    return css; // hex string — esri Color autocasts CSS color strings
+  };
+
+  const featuresToGraphics = (features: GeoJSON.Feature[]): Graphic[] => {
+    const graphics: Graphic[] = [];
+    for (const feature of features) {
+      const props = feature.properties as Record<string, any>;
+      const geometry = feature.geometry;
+      if (geometry.type === "Point" && props.kind === "label") {
+        graphics.push(
+          new Graphic({
+            geometry: {
+              type: "point",
+              longitude: geometry.coordinates[0],
+              latitude: geometry.coordinates[1],
+            },
+            symbol: {
+              type: "text",
+              text: props.label,
+              color: cssToEsriColor(props.labelColor),
+              angle: props.labelAngle ?? 0,
+              haloColor: [0, 0, 0, 0.8],
+              haloSize: 1,
+              font: { size: props.labelSize ?? 10 },
+            },
+          }),
+        );
+      } else if (geometry.type === "Polygon" || geometry.type === "MultiPolygon") {
+        const rings =
+          geometry.type === "Polygon" ? geometry.coordinates : geometry.coordinates.flat();
+        graphics.push(
+          new Graphic({
+            geometry: { type: "polygon", rings },
+            symbol: {
+              type: "simple-fill",
+              color: props.kind === "fill" ? cssToEsriColor(props.fill) : [0, 0, 0, 0],
+              outline: {
+                color: cssToEsriColor(props.stroke),
+                width: props.strokeWidth ?? 2,
+                style: props.dash ? "dash" : "solid",
+              },
+            },
+          }),
+        );
+      } else if (geometry.type === "LineString" || geometry.type === "MultiLineString") {
+        const paths =
+          geometry.type === "LineString" ? [geometry.coordinates] : geometry.coordinates;
+        graphics.push(
+          new Graphic({
+            geometry: { type: "polyline", paths },
+            symbol: {
+              type: "simple-line",
+              color: cssToEsriColor(props.stroke),
+              width: props.strokeWidth ?? 2,
+              style: props.dash ? "dash" : "solid",
+            },
+          }),
+        );
+      }
+    }
+    return graphics;
+  };
+
+  // 10k graphics need the incremental scheduler: viewport cull + screen-size
+  // LOD + zoom-bucketed cache + chunked generation. Each update appends only
+  // the new features so the GraphicsLayer isn't rebuilt per chunk.
+  const scheduler = new TacticalScheduler(scenario.tacticalGraphics);
+  let tacticalFull = 0;
+  let tacticalSimplified = 0;
+  let appliedFeatureCount = 0;
+  const refreshTactical = (view: InstanceType<typeof MapView>) => {
+    const extent = view.extent;
+    if (!extent) return;
+    // extent is in web-mercator meters — convert to degrees for the renderer
+    const toLng = (x: number) => (x / WORLD) * 360;
+    const toLat = (y: number) =>
+      ((2 * Math.atan(Math.exp((y / WORLD) * 2 * Math.PI)) - Math.PI / 2) * 180) / Math.PI;
+
+    appliedFeatureCount = 0;
+    tacticalLayer.removeAll();
+    scheduler.request(
+      {
+        bbox: [toLng(extent.xmin), toLat(extent.ymin), toLng(extent.xmax), toLat(extent.ymax)],
+        widthPx: view.width,
+        heightPx: view.height,
+        zoom: Math.log2(591657527.591555 / view.scale),
+      },
+      (update) => {
+        const fresh = update.collection.features.slice(appliedFeatureCount);
+        appliedFeatureCount = update.collection.features.length;
+        if (fresh.length > 0) tacticalLayer.addMany(featuresToGraphics(fresh as GeoJSON.Feature[]));
+        tacticalFull = update.visible;
+        tacticalSimplified = update.simplified;
+        pushHud();
+      },
+    );
+  };
+
   // fall back to a blank web-mercator view when the basemap CDN is unreachable
   let online = true;
   try {
@@ -133,7 +250,7 @@ async function main() {
 
   const map = new Map({
     basemap: online ? "dark-gray-vector" : undefined,
-    layers: [new UnitsLayer()],
+    layers: [tacticalLayer, new UnitsLayer()],
   });
 
   const view = new MapView({
@@ -149,11 +266,26 @@ async function main() {
   (window as unknown as { __view: unknown }).__view = view;
 
   await view.when();
+  refreshTactical(view);
+  // regenerate view-dependent multipoint graphics when the camera settles
+  reactiveUtils.watch(
+    () => view.stationary,
+    (stationary) => {
+      if (stationary) refreshTactical(view);
+    },
+  );
+
   pushHud();
   setInterval(pushHud, 2000);
 
   function pushHud() {
-    hud.set({ units: scenario.count, atlasEntries: controller.atlas.entryCount });
+    hud.set({
+      units: scenario.count,
+      atlasEntries: controller.atlas.entryCount,
+      tacticalFull,
+      tacticalSimplified,
+      tacticalTotal: scenario.tacticalGraphics.length,
+    });
   }
 }
 

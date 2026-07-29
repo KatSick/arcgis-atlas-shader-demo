@@ -1,7 +1,16 @@
+export interface CimHudInfo {
+  units: number;
+  atlasEntries: number;
+  /** multipoint tactical graphics (mil-sym-ts pipeline), when the demo shows them */
+  tacticalFull?: number;
+  tacticalSimplified?: number;
+  tacticalTotal?: number;
+}
+
 /** Tiny stats overlay for the CIM dictionary demos: fps, units, atlas usage. */
 export function createCimHud(engineName: string): {
   frame(nowMs: number): void;
-  set(info: { units: number; atlasEntries: number }): void;
+  set(info: CimHudInfo): void;
 } {
   const el = document.createElement("div");
   el.style.cssText = [
@@ -22,12 +31,18 @@ export function createCimHud(engineName: string): {
   let frames = 0;
   let windowStart = 0;
   let fps = 0;
-  let info = { units: 0, atlasEntries: 0 };
+  let info: CimHudInfo = { units: 0, atlasEntries: 0 };
 
   const redraw = () => {
-    el.textContent =
+    let text =
       `${engineName} · CIM dictionary renderer (stylx → Canvas → atlas)\n` +
       `fps ${fps.toFixed(0).padStart(3)} · units ${info.units} · atlas ${info.atlasEntries}`;
+    if (info.tacticalTotal !== undefined) {
+      text +=
+        `\nmultipoint ${info.tacticalTotal}: ${info.tacticalFull ?? 0} full + ` +
+        `${info.tacticalSimplified ?? 0} simplified in view`;
+    }
+    el.textContent = text;
   };
 
   return {

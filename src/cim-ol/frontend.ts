@@ -1,13 +1,23 @@
 import { Map, View } from "ol";
 import Layer from "ol/layer/Layer";
 import TileLayer from "ol/layer/Tile";
+import VectorLayer from "ol/layer/Vector";
+import VectorSource from "ol/source/Vector";
 import OSM from "ol/source/OSM";
-import { fromLonLat } from "ol/proj";
+import GeoJSONFormat from "ol/format/GeoJSON";
+import { Fill, Stroke, Style, Text } from "ol/style";
+import type { FeatureLike } from "ol/Feature";
+import { fromLonLat, toLonLat } from "ol/proj";
 import type { FrameState } from "ol/Map";
 import "ol/ol.css";
 
 import { createScenario } from "../universal-core/scenario";
 import { UnitLayerController } from "../universal-core/unit-layer";
+import {
+  initTactical,
+  listMultipointControlMeasures,
+  TacticalScheduler,
+} from "../universal-core/tactical";
 import type { CimDictionaryItems } from "../cim-dictionary/cim-types";
 import { UniversalDictionaryRenderer } from "../cim-dictionary/renderer";
 import { createCimHud } from "../cim-dictionary/hud";
@@ -26,11 +36,41 @@ import { loadDictionaryItemsJson } from "../cim-dictionary/stylx-macro" with { t
 
 const params = new URLSearchParams(window.location.search);
 const UNIT_COUNT = Number(params.get("count")) || 50_000;
+const TACTICAL_COUNT = Number(params.get("tactical")) || 10_000;
 
 /** Web-Mercator world width in meters (EPSG:3857) */
 const WORLD = 40075016.68557849;
 
 const hud = createCimHud("OpenLayers");
+
+/**
+ * mil-sym-ts styled-GeoJSON → OpenLayers vector styles: the OL leg of the
+ * engine-adapter table in RESEARCH.md §2.2. The pipeline emits fills, solid
+ * and dashed strokes, and rotated labels with explicit style properties.
+ */
+function tacticalStyle(feature: FeatureLike, _resolution: number): Style {
+  const props = feature.getProperties() as Record<string, any>;
+  if (props.kind === "label") {
+    return new Style({
+      text: new Text({
+        text: String(props.label ?? ""),
+        font: `${props.labelSize ?? 10}px sans-serif`,
+        rotation: ((props.labelAngle ?? 0) * Math.PI) / 180,
+        fill: new Fill({ color: props.labelColor ?? "#ffffff" }),
+        stroke: new Stroke({ color: "rgba(0,0,0,0.8)", width: 2 }),
+      }),
+    });
+  }
+  const stroke = new Stroke({
+    color: props.stroke ?? "#80E0FF",
+    width: props.strokeWidth ?? 2,
+    lineDash: props.dash ? [6, 4] : undefined,
+  });
+  if (props.kind === "fill") {
+    return new Style({ stroke, fill: new Fill({ color: props.fill ?? "rgba(0,0,0,0)" }) });
+  }
+  return new Style({ stroke });
+}
 
 class CimUnitLayer extends Layer {
   private readonly controller: UnitLayerController;
@@ -110,22 +150,77 @@ class CimUnitLayer extends Layer {
 async function main() {
   const items = JSON.parse(await loadDictionaryItemsJson()) as CimDictionaryItems;
 
+  await initTactical();
+
   console.time("scenario generation");
-  const scenario = createScenario(UNIT_COUNT, 0);
+  const scenario = createScenario(UNIT_COUNT, TACTICAL_COUNT, listMultipointControlMeasures());
   console.timeEnd("scenario generation");
 
   const dictionaryRenderer = new UniversalDictionaryRenderer({ items });
   const controller = new UnitLayerController(scenario, { atlas: dictionaryRenderer.atlas });
 
+  // ---- multipoint tactical graphics: mil-sym-ts GeoJSON → vector layer ----
+  const tacticalSource = new VectorSource();
+  const tacticalLayer = new VectorLayer({ source: tacticalSource, style: tacticalStyle });
+  const geojsonFormat = new GeoJSONFormat({ featureProjection: "EPSG:3857" });
+
   const map = new Map({
     target: "root",
-    layers: [new TileLayer({ preload: 4, source: new OSM() }), new CimUnitLayer(controller)],
+    layers: [
+      new TileLayer({ preload: 4, source: new OSM() }),
+      tacticalLayer,
+      new CimUnitLayer(controller),
+    ],
     view: new View({
       center: fromLonLat([-98, 38]),
       zoom: 5,
     }),
   });
   (window as unknown as { __map: unknown }).__map = map;
+
+  // 10k graphics need the incremental scheduler: viewport cull + screen-size
+  // LOD + zoom-bucketed cache + chunked generation. Each update appends only
+  // the new features so the source isn't rebuilt per chunk.
+  const scheduler = new TacticalScheduler(scenario.tacticalGraphics);
+  let tacticalFull = 0;
+  let tacticalSimplified = 0;
+  let appliedFeatureCount = 0;
+  const refreshTactical = () => {
+    const view = map.getView();
+    const size = map.getSize();
+    const extent = view.calculateExtent(size ?? undefined);
+    if (!extent) return;
+    const [west, south] = toLonLat([extent[0]!, extent[1]!]);
+    const [east, north] = toLonLat([extent[2]!, extent[3]!]);
+
+    appliedFeatureCount = 0;
+    tacticalSource.clear(true);
+    scheduler.request(
+      {
+        bbox: [west!, south!, east!, north!],
+        widthPx: size?.[0] ?? window.innerWidth,
+        heightPx: size?.[1] ?? window.innerHeight,
+        zoom: view.getZoom() ?? 5,
+      },
+      (update) => {
+        const fresh = update.collection.features.slice(appliedFeatureCount);
+        appliedFeatureCount = update.collection.features.length;
+        if (fresh.length > 0) {
+          tacticalSource.addFeatures(
+            geojsonFormat.readFeatures({ type: "FeatureCollection", features: fresh }),
+          );
+        }
+        tacticalFull = update.visible;
+        tacticalSimplified = update.simplified;
+        pushHud();
+      },
+    );
+  };
+
+  // multipoint graphics are view-dependent (arrowheads, ticks, labels are
+  // screen-space): regenerate when the camera settles
+  map.on("moveend", refreshTactical);
+  refreshTactical();
 
   // continuous repaint for the real-time simulation
   const tick = () => {
@@ -134,11 +229,18 @@ async function main() {
   };
   requestAnimationFrame(tick);
 
-  hud.set({ units: scenario.count, atlasEntries: controller.atlas.entryCount });
-  setInterval(
-    () => hud.set({ units: scenario.count, atlasEntries: controller.atlas.entryCount }),
-    2000,
-  );
+  function pushHud() {
+    hud.set({
+      units: scenario.count,
+      atlasEntries: controller.atlas.entryCount,
+      tacticalFull,
+      tacticalSimplified,
+      tacticalTotal: scenario.tacticalGraphics.length,
+    });
+  }
+
+  pushHud();
+  setInterval(pushHud, 2000);
 }
 
 main();

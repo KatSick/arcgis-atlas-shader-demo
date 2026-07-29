@@ -10,7 +10,7 @@ into a texture atlas and draw as instanced quads via `BaseLayerViewGL2D`.
 The _same renderer class_ (and data flow) drives `cim-maplibre` and `cim-ol`:
 one dictionary renderer, any engine.
 
-50 000 animated units by default (`?count=` to change).
+50 000 animated units + 10 000 multipoint tactical graphics (mil-sym-ts pipeline) by default (`?count=` / `?tactical=` to change).
 
 ## Run
 
