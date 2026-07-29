@@ -29,9 +29,17 @@ jobs:
         with:
           path: dist/
   deploy:
-    # Pages deploys only from main — the github-pages environment rejects
-    # other branches, which failed this job on every pull request
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    # Deploys the production Pages site on pushes to main and on same-repo
+    # pull requests (fork PRs lack the required permissions). A PR deploy
+    # replaces the live site until the next deploy from main.
+    # NOTE: the github-pages environment must allow the PR branch, otherwise
+    # this job is rejected before it starts: Settings -> Environments ->
+    # github-pages -> Deployment branches -> add a pattern like claude/* or
+    # choose "No restriction".
+    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository
+    concurrency:
+      group: "pages"
+      cancel-in-progress: true
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
